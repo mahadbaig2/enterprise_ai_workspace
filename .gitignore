@@ -43,6 +43,6 @@ yarn-error.log*
 next-env.d.ts
 
 # documents
-/documents/CONTEXT(SRS).pdf
+/documents/CONTEXT (SRS).pdf
 /documents/PRD.pdf
 /documents/TODO.pdf
