@@ -1,6 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
+/frontend/node_modules
 /node_modules
 /.pnp
 .pnp.*
@@ -11,9 +12,10 @@
 !.yarn/versions
 
 # testing
+/frontend/coverage
 /coverage
-
 # next.js
+/frontend/.next/
 /.next/
 /out/
 
@@ -43,6 +45,6 @@ yarn-error.log*
 next-env.d.ts
 
 # documents
-/documents/CONTEXT(SRS).pdf
+/documents/CONTEXT (SRS).pdf
 /documents/PRD.pdf
 /documents/TODO.pdf
