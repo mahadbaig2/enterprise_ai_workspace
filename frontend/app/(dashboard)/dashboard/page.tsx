@@ -2,7 +2,43 @@
 
 import { useAuth } from '@/hooks/use-auth';
 import { useWorkspace } from '@/hooks/use-workspace';
-import { Sparkles, LogOut, Loader2, Building2, Layers } from 'lucide-react';
+import {
+  Bot,
+  Cloud,
+  FileSearch,
+  FileText,
+  LogOut,
+  MailPlus,
+  Loader2,
+  Search,
+  Sparkles,
+  TicketCheck,
+} from 'lucide-react';
+
+const quickActions = [
+  {
+    icon: Search,
+    title: 'Search your knowledge base',
+    description: 'Ask grounded questions after integrations are connected.',
+  },
+  {
+    icon: TicketCheck,
+    title: 'Manage Jira tasks',
+    description: 'Retrieve, create, and update issues from chat.',
+  },
+  {
+    icon: MailPlus,
+    title: 'Draft an email',
+    description: 'Prepare email drafts without leaving your workspace.',
+  },
+];
+
+const connectedApps = [
+  { initials: 'GD', name: 'Google Drive', icon: Cloud },
+  { initials: 'NO', name: 'Notion', icon: FileText },
+  { initials: 'JI', name: 'Jira', icon: TicketCheck },
+  { initials: 'GM', name: 'Gmail', icon: MailPlus },
+];
 
 export default function DashboardPage() {
   const { user, loading: authLoading, signOut } = useAuth();
@@ -46,7 +82,7 @@ export default function DashboardPage() {
       </header>
 
       {/* Main content */}
-      <main className="max-w-3xl mx-auto px-6 py-12 relative z-10">
+      <main className="max-w-5xl mx-auto px-6 py-12 relative z-10">
         {/* Welcome */}
         <div className="mb-10">
           <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-1">Dashboard</p>
@@ -58,32 +94,64 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        {/* Workspace info card */}
-        <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800/80 backdrop-blur-md mb-6 flex items-center space-x-4">
-          <div className="w-10 h-10 rounded-xl bg-red-600/15 border border-red-500/20 flex items-center justify-center text-red-400 shrink-0">
-            <Building2 className="w-5 h-5" />
+        <section className="mb-8">
+          <div className="mb-4 flex items-center gap-2">
+            <Bot className="h-4 w-4 text-slate-500" />
+            <h2 className="text-sm font-semibold text-slate-300">Quick Actions</h2>
           </div>
-          <div className="overflow-hidden">
-            <p className="text-sm font-semibold text-white truncate">{workspace?.name}</p>
-            <p className="text-xs text-slate-500 font-mono truncate">{workspace?.slug}</p>
-          </div>
-          <div className="ml-auto">
-            <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-semibold">
-              Active
-            </span>
-          </div>
-        </div>
+          <div className="grid gap-4 md:grid-cols-3">
+            {quickActions.map((action) => {
+              const Icon = action.icon;
 
-        {/* Integrations placeholder */}
-        <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-md">
-          <div className="flex items-center space-x-2 mb-3">
-            <Layers className="w-4 h-4 text-slate-500" />
-            <p className="text-sm font-semibold text-slate-300">Integrations</p>
+              return (
+                <div
+                  key={action.title}
+                  className="rounded-xl border border-slate-800/80 bg-slate-900/60 p-5 opacity-75 backdrop-blur-md"
+                >
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-800 bg-slate-950 text-slate-400">
+                      <Icon className="h-5 w-5" />
+                    </div>
+                    <span className="rounded-full border border-slate-700 bg-slate-950 px-2.5 py-1 text-[10px] font-semibold text-slate-500">
+                      Coming soon
+                    </span>
+                  </div>
+                  <h3 className="text-sm font-semibold text-slate-200">{action.title}</h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">{action.description}</p>
+                </div>
+              );
+            })}
           </div>
-          <p className="text-sm text-slate-500">
-            Your integrations will appear here. Connect Google Drive, Notion, and Jira to start syncing your enterprise knowledge.
-          </p>
-        </div>
+        </section>
+
+        <section>
+          <div className="mb-4 flex items-center gap-2">
+            <FileSearch className="h-4 w-4 text-slate-500" />
+            <h2 className="text-sm font-semibold text-slate-300">Connected Apps</h2>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {connectedApps.map((app) => {
+              const Icon = app.icon;
+
+              return (
+                <div
+                  key={app.name}
+                  className="rounded-xl border border-slate-800/80 bg-slate-900/60 p-4 backdrop-blur-md"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-800 bg-slate-950 text-slate-400">
+                      <Icon className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-200">{app.name}</p>
+                      <p className="text-xs text-slate-500">Not connected</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       </main>
     </div>
   );

@@ -30,7 +30,45 @@ CREATE TABLE IF NOT EXISTS public.workspace_members (
     UNIQUE(workspace_id, user_id)
 );
 
--- 4. INTEGRATIONS TABLE
+-- 4. ONBOARDING TABLE
+CREATE TABLE IF NOT EXISTS public.onboarding (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
+    current_step INTEGER NOT NULL DEFAULT 1,
+    completed BOOLEAN NOT NULL DEFAULT FALSE,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    UNIQUE(workspace_id)
+);
+
+CREATE OR REPLACE FUNCTION public.create_workspace_onboarding()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    INSERT INTO public.onboarding (workspace_id)
+    VALUES (NEW.id)
+    ON CONFLICT (workspace_id) DO NOTHING;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS create_workspace_onboarding_trigger ON public.workspaces;
+CREATE TRIGGER create_workspace_onboarding_trigger
+AFTER INSERT ON public.workspaces
+FOR EACH ROW
+EXECUTE FUNCTION public.create_workspace_onboarding();
+
+INSERT INTO public.onboarding (workspace_id)
+SELECT id
+FROM public.workspaces
+ON CONFLICT (workspace_id) DO NOTHING;
+
+-- 5. INTEGRATIONS TABLE
 CREATE TABLE IF NOT EXISTS public.integrations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
@@ -41,7 +79,7 @@ CREATE TABLE IF NOT EXISTS public.integrations (
     UNIQUE(workspace_id, provider)
 );
 
--- 5. DOCUMENTS TABLE (Hybrid Search: pgvector + Full-Text Search)
+-- 6. DOCUMENTS TABLE (Hybrid Search: pgvector + Full-Text Search)
 CREATE TABLE IF NOT EXISTS public.documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
@@ -67,7 +105,7 @@ CREATE INDEX IF NOT EXISTS documents_fts_idx
 ON public.documents 
 USING gin (fts);
 
--- 6. CONVERSATIONS TABLE
+-- 7. CONVERSATIONS TABLE
 CREATE TABLE IF NOT EXISTS public.conversations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
@@ -77,7 +115,7 @@ CREATE TABLE IF NOT EXISTS public.conversations (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 7. MESSAGES TABLE
+-- 8. MESSAGES TABLE
 CREATE TABLE IF NOT EXISTS public.messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id UUID NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
@@ -89,7 +127,7 @@ CREATE TABLE IF NOT EXISTS public.messages (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 8. HYBRID SEARCH STORED FUNCTION (Semantic Vector + FTS Keyword Match)
+-- 9. HYBRID SEARCH STORED FUNCTION (Semantic Vector + FTS Keyword Match)
 CREATE OR REPLACE FUNCTION match_documents(
     query_text TEXT,
     query_embedding VECTOR(1536),
@@ -139,6 +177,7 @@ $$;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.workspaces ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.workspace_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.onboarding ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.integrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
@@ -149,3 +188,32 @@ CREATE POLICY "Users can access own profile" ON public.profiles FOR ALL USING (a
 CREATE POLICY "Users can access workspaces they belong to" ON public.workspaces FOR ALL USING (
     id IN (SELECT workspace_id FROM public.workspace_members WHERE user_id = auth.uid()) OR owner_id = auth.uid()
 );
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'onboarding'
+          AND policyname = 'Users can access onboarding for owned workspace'
+    ) THEN
+        CREATE POLICY "Users can access onboarding for owned workspace"
+        ON public.onboarding
+        FOR ALL
+        USING (
+            workspace_id IN (
+                SELECT id
+                FROM public.workspaces
+                WHERE owner_id = (SELECT auth.uid())
+            )
+        )
+        WITH CHECK (
+            workspace_id IN (
+                SELECT id
+                FROM public.workspaces
+                WHERE owner_id = (SELECT auth.uid())
+            )
+        );
+    END IF;
+END $$;

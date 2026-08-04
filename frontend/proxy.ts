@@ -40,6 +40,7 @@ export default async function proxy(request: NextRequest) {
   const isAuthCallback = pathname.startsWith('/auth/callback');
   const isLandingPage = pathname === '/';
   const isWorkspaceNew = pathname.startsWith('/workspace/new');
+  const isOnboarding = pathname.startsWith('/onboarding');
 
   // 1. Unauthenticated → /login (except public routes)
   if (!user && !isAuthPage && !isAuthCallback && !isLandingPage) {
@@ -56,7 +57,7 @@ export default async function proxy(request: NextRequest) {
   }
 
   // 3. Authenticated + /dashboard → check workspace exists server-side
-  if (user && pathname === '/dashboard' && session?.access_token) {
+  if (user && (pathname === '/dashboard' || isOnboarding) && session?.access_token) {
     try {
       const workspaceRes = await fetch(`${BACKEND_URL}/workspace`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
@@ -68,6 +69,29 @@ export default async function proxy(request: NextRequest) {
         const url = request.nextUrl.clone();
         url.pathname = '/workspace/new';
         return NextResponse.redirect(url);
+      }
+
+      if (workspaceRes.ok) {
+        const onboardingRes = await fetch(`${BACKEND_URL}/onboarding`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          signal: AbortSignal.timeout(3000),
+        });
+
+        if (onboardingRes.ok) {
+          const onboarding = await onboardingRes.json();
+
+          if (pathname === '/dashboard' && !onboarding.completed) {
+            const url = request.nextUrl.clone();
+            url.pathname = '/onboarding';
+            return NextResponse.redirect(url);
+          }
+
+          if (isOnboarding && onboarding.completed) {
+            const url = request.nextUrl.clone();
+            url.pathname = '/dashboard';
+            return NextResponse.redirect(url);
+          }
+        }
       }
       // 401 / 5xx: fall through and let the page handle it gracefully
     } catch {

@@ -7,7 +7,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, workspace
+from app.routers import auth, onboarding, workspace
 
 app = FastAPI(
     title="Enterprise AI Workspace API",
@@ -29,9 +29,9 @@ app.add_middleware(
 # Routers
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(workspace.router, prefix="/workspace", tags=["Workspace"])
+app.include_router(onboarding.router, prefix="/onboarding", tags=["Onboarding"])
 
 
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "Enterprise AI Workspace API"}
-
