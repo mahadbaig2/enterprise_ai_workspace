@@ -34,7 +34,7 @@ export default function CreateWorkspacePage() {
 
     try {
       await createWorkspace(name.trim(), session.access_token);
-      router.push('/dashboard');
+      router.push('/onboarding');
       router.refresh();
     } catch (err: any) {
       setError(err.message || 'Failed to create workspace. Please try again.');
