@@ -34,8 +34,8 @@ export default function SignupPage() {
       if (authError) throw authError;
 
       setSuccess(true);
-    } catch (err: any) {
-      setError(err.message || 'Failed to create account. Please try again.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create account. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -53,8 +53,8 @@ export default function SignupPage() {
         },
       });
       if (authError) throw authError;
-    } catch (err: any) {
-      setError(err.message || 'Failed to sign in with Google.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to sign in with Google.');
       setOauthLoading(false);
     }
   };
@@ -73,7 +73,7 @@ export default function SignupPage() {
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-white mb-2">Check Your Email</h1>
             <p className="text-slate-400 text-sm leading-relaxed mb-6">
-              We've sent a verification link to <span className="text-slate-200 font-medium">{email}</span>. 
+              We&apos;ve sent a verification link to <span className="text-slate-200 font-medium">{email}</span>. 
               Please click the link in your email to activate your account.
             </p>
             <Link

@@ -5,12 +5,13 @@ import { Loader2 } from 'lucide-react';
 import { CompletionStep } from '@/components/onboarding/completion-step';
 import { ConnectToolsStep } from '@/components/onboarding/connect-tools-step';
 import { ProgressBar } from '@/components/onboarding/progress-bar';
-import { UploadDocumentsStep } from '@/components/onboarding/upload-documents-step';
 import { WelcomeStep } from '@/components/onboarding/welcome-step';
+import { useIntegrations } from '@/hooks/use-integrations';
 import { useOnboarding } from '@/hooks/use-onboarding';
 import { useWorkspace } from '@/hooks/use-workspace';
+import { requiredIntegrationProviders } from '@/lib/integrations';
 
-const TOTAL_STEPS = 4;
+const TOTAL_STEPS = 5;
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -21,6 +22,7 @@ export default function OnboardingPage() {
     updateStep,
     completeOnboarding,
   } = useOnboarding();
+  const { connectedProviders } = useIntegrations();
   const { workspace, loading: workspaceLoading } = useWorkspace();
 
   const loading = onboardingLoading || workspaceLoading;
@@ -34,6 +36,15 @@ export default function OnboardingPage() {
   };
 
   const finish = async () => {
+    const hasAllRequiredIntegrations = requiredIntegrationProviders.every((provider) =>
+      connectedProviders.has(provider)
+    );
+
+    if (!hasAllRequiredIntegrations) {
+      await updateStep(2);
+      return;
+    }
+
     await completeOnboarding();
     router.push('/dashboard');
     router.refresh();
@@ -68,16 +79,18 @@ export default function OnboardingPage() {
         <WelcomeStep
           workspaceName={workspace?.name ?? 'your workspace'}
           onNext={() => goToStep(2)}
-          onSkipSetup={finish}
         />
       )}
       {currentStep === 2 && (
-        <ConnectToolsStep onNext={() => goToStep(3)} onSkip={() => goToStep(3)} />
+        <ConnectToolsStep provider="google_drive" onNext={() => goToStep(3)} />
       )}
       {currentStep === 3 && (
-        <UploadDocumentsStep onNext={() => goToStep(4)} onSkip={() => goToStep(4)} />
+        <ConnectToolsStep provider="notion" onNext={() => goToStep(4)} />
       )}
-      {currentStep === 4 && <CompletionStep onComplete={finish} />}
+      {currentStep === 4 && (
+        <ConnectToolsStep provider="jira" onNext={() => goToStep(5)} />
+      )}
+      {currentStep === 5 && <CompletionStep onComplete={finish} />}
     </div>
   );
 }

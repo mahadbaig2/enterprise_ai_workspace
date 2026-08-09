@@ -36,8 +36,8 @@ export default function CreateWorkspacePage() {
       await createWorkspace(name.trim(), session.access_token);
       router.push('/onboarding');
       router.refresh();
-    } catch (err: any) {
-      setError(err.message || 'Failed to create workspace. Please try again.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create workspace. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -57,7 +57,7 @@ export default function CreateWorkspacePage() {
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-white">Create your workspace</h1>
           <p className="text-slate-400 text-sm mt-1">
-            Your workspace is where your team's knowledge lives.
+            Your workspace is where your team&apos;s knowledge lives.
           </p>
         </div>
 

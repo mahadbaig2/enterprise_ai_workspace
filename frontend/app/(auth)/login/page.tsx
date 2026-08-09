@@ -30,8 +30,8 @@ export default function LoginPage() {
 
       router.push('/dashboard');
       router.refresh();
-    } catch (err: any) {
-      setError(err.message || 'Failed to sign in. Please check your credentials.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to sign in. Please check your credentials.');
     } finally {
       setLoading(false);
     }
@@ -49,8 +49,8 @@ export default function LoginPage() {
         },
       });
       if (authError) throw authError;
-    } catch (err: any) {
-      setError(err.message || 'Failed to sign in with Google.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to sign in with Google.');
       setOauthLoading(false);
     }
   };
@@ -153,7 +153,7 @@ export default function LoginPage() {
 
         <div className="mt-8 pt-6 border-t border-slate-800/80 text-center">
           <p className="text-slate-400 text-sm">
-            Don't have an account?{' '}
+            Don&apos;t have an account?{' '}
             <Link href="/signup" className="text-red-400 hover:text-red-300 font-medium hover:underline">
               Create an account
             </Link>

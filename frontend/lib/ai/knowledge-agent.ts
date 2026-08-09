@@ -14,93 +14,88 @@ export interface KnowledgeAgentResponse {
   citations: Citation[];
 }
 
+type KnowledgeDocument = {
+  id?: string;
+  document_id?: string;
+  title: string;
+  source: string;
+  url?: string;
+  content: string;
+  chunk_index?: number;
+};
+
+function normalizeSource(source: string): Citation['source'] {
+  if (source === 'google_drive' || source === 'notion') return source;
+  return 'other';
+}
+
 export async function processKnowledgeQuery(
   userQuery: string,
-  workspaceId?: string
+  workspaceId?: string,
+  authorization?: string
 ): Promise<KnowledgeAgentResponse> {
-  let documents: any[] = [];
+  let documents: KnowledgeDocument[] = [];
 
-  // Attempt Hybrid Search from Supabase Database
   try {
-    const supabase = await createClient();
-    
-    // Call Supabase stored procedure `match_documents` for hybrid search
-    const { data, error } = await supabase.rpc('match_documents', {
-      query_text: userQuery,
-      query_embedding: null, // Set vector array if embedding pipeline active
-      match_threshold: 0.1,
-      match_count: 5,
-      filter_workspace_id: workspaceId || null,
-    });
-
-    if (!error && data && data.length > 0) {
-      documents = data;
+    if (authorization && workspaceId) {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+      const response = await fetch(backendUrl + '/rag/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: authorization },
+        body: JSON.stringify({ query: userQuery, match_count: 8 }),
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        throw new Error('RAG search failed with status ' + response.status);
+      }
+      const rag = (await response.json()) as { results?: KnowledgeDocument[] };
+      documents = rag.results || [];
     } else {
-      // Fallback query directly on documents table using Postgres FTS
-      const { data: ftsData } = await supabase
-        .from('documents')
-        .select('*')
-        .textSearch('fts', userQuery, { config: 'english', type: 'websearch' })
-        .limit(5);
-
-      if (ftsData && ftsData.length > 0) {
-        documents = ftsData;
+      const supabase = await createClient();
+      const { data, error } = await supabase.rpc('match_document_chunks', {
+        query_text: userQuery,
+        query_embedding: null,
+        match_threshold: 0.1,
+        match_count: 8,
+        filter_workspace_id: workspaceId || null,
+        filter_sources: null,
+        filter_metadata: null,
+      });
+      if (!error && data && data.length > 0) {
+        documents = data as KnowledgeDocument[];
       }
     }
   } catch (err) {
-    console.warn('Database retrieval failed, utilizing sample knowledge context:', err);
+    console.warn('RAG retrieval failed:', err);
   }
 
-  // Fallback documents if DB is not yet populated
-  if (documents.length === 0) {
-    documents = [
-      {
-        id: 'doc-leave-policy-1',
-        title: 'Company Leave & Time-Off Policy 2026',
-        source: 'notion',
-        url: 'https://notion.so/company/leave-policy',
-        content: 'Employees receive 20 days of paid annual leave, 10 days of sick leave, and paid public holidays. Leave requests over 3 consecutive days require manager approval via HR Portal.',
-      },
-      {
-        id: 'doc-engineering-guide-2',
-        title: 'Engineering Onboarding & Code Review Guide',
-        source: 'google_drive',
-        url: 'https://drive.google.com/file/d/engineering-onboarding',
-        content: 'All pull requests require at least 1 peer approval and passing CI build. Standard deployment windows are Monday through Thursday before 4 PM.',
-      }
-    ];
-  }
-
-  // Construct Citations & Context
   const citations: Citation[] = documents.map((doc, idx) => ({
-    id: doc.id || `doc-${idx + 1}`,
+    id: doc.id || 'chunk-' + (idx + 1),
     title: doc.title,
-    source: doc.source as any,
+    source: normalizeSource(doc.source),
     url: doc.url,
-    snippet: doc.content.slice(0, 200) + '...',
+    snippet: doc.content.slice(0, 200) + (doc.content.length > 200 ? '...' : ''),
   }));
 
-  const contextText = documents
-    .map((doc, idx) => `[Source ${idx + 1}: ${doc.title} (${doc.source})]\n${doc.content}`)
-    .join('\n\n');
+  const contextText = documents.length > 0
+    ? documents
+      .map((doc, idx) => '[Source ' + (idx + 1) + ': ' + doc.title + ' (' + doc.source + ')]\n' + doc.content)
+      .join('\n\n')
+    : 'No matching connected workspace documents were found.';
 
-  const systemPrompt = `You are the Knowledge Agent of Enterprise AI Workspace.
-Your task is to answer the employee's question strictly grounded in the provided document context.
-Rules:
-1. Always cite sources inline using format [Title] or [Source X].
-2. If context does not contain the answer, politely state that information was not found in connected workspace documents.
-3. Keep response professional, concise, and clearly structured in markdown.
-
-DOCUMENT CONTEXT:
-${contextText}`;
+  const systemPrompt = 'You are the Knowledge Agent of Enterprise AI Workspace.\n' +
+    'Answer the employee question strictly grounded in the provided document context.\n' +
+    'Always cite sources inline using [Title] or [Source X] when context supports an answer.\n' +
+    'If context does not contain the answer, state that information was not found in connected workspace documents.\n' +
+    'Keep the response professional, concise, and structured in markdown.\n\n' +
+    'DOCUMENT CONTEXT:\n' + contextText;
 
   const llmResponse = await generateGroqCompletion(systemPrompt, userQuery);
+  const answer = llmResponse || (documents.length > 0
+    ? 'I found ' + documents.length + ' relevant workspace document' +
+      (documents.length === 1 ? '' : 's') +
+      '. Review the citations below for the grounded source text.'
+    : 'I could not find this information in the connected workspace documents.');
 
-  const answer = llmResponse || 
-    `Based on **${citations[0]?.title || 'Connected Enterprise Documents'}**:\n\nEmployees receive **20 days of paid annual leave** and **10 days of sick leave**. Requests exceeding 3 consecutive days require manager approval via HR portal.\n\n*Source: [${citations[0]?.title || 'Leave Policy'}]*`;
-
-  return {
-    answer,
-    citations,
-  };
+  return { answer, citations };
 }

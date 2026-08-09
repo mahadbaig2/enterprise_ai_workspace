@@ -1,19 +1,20 @@
 'use client';
 
+import Link from 'next/link';
 import { useAuth } from '@/hooks/use-auth';
+import { useIntegrations } from '@/hooks/use-integrations';
 import { useWorkspace } from '@/hooks/use-workspace';
 import {
   Bot,
-  Cloud,
   FileSearch,
-  FileText,
   LogOut,
-  MailPlus,
   Loader2,
+  Plug,
   Search,
   Sparkles,
   TicketCheck,
 } from 'lucide-react';
+import { integrationCards } from '@/lib/integrations';
 
 const quickActions = [
   {
@@ -27,24 +28,21 @@ const quickActions = [
     description: 'Retrieve, create, and update issues from chat.',
   },
   {
-    icon: MailPlus,
-    title: 'Draft an email',
-    description: 'Prepare email drafts without leaving your workspace.',
+    icon: Plug,
+    title: 'Review connected apps',
+    description: 'Check Google Drive, Notion, and Jira connection status.',
   },
-];
-
-const connectedApps = [
-  { initials: 'GD', name: 'Google Drive', icon: Cloud },
-  { initials: 'NO', name: 'Notion', icon: FileText },
-  { initials: 'JI', name: 'Jira', icon: TicketCheck },
-  { initials: 'GM', name: 'Gmail', icon: MailPlus },
 ];
 
 export default function DashboardPage() {
   const { user, loading: authLoading, signOut } = useAuth();
   const { workspace, loading: workspaceLoading } = useWorkspace();
+  const { integrations, loading: integrationsLoading } = useIntegrations();
 
   const loading = authLoading || workspaceLoading;
+  const integrationsByProvider = new Map(
+    integrations.map((integration) => [integration.provider, integration])
+  );
 
   if (loading) {
     return (
@@ -72,13 +70,22 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <button
-          onClick={signOut}
-          className="flex items-center space-x-1.5 text-xs text-slate-400 hover:text-red-400 transition-colors cursor-pointer group"
-        >
-          <LogOut className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
-          <span>Sign Out</span>
-        </button>
+        <div className="flex items-center gap-4">
+          <Link
+            href="/integrations"
+            className="flex items-center space-x-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+          >
+            <Plug className="w-3.5 h-3.5" />
+            <span>Connected Apps</span>
+          </Link>
+          <button
+            onClick={signOut}
+            className="flex items-center space-x-1.5 text-xs text-slate-400 hover:text-red-400 transition-colors cursor-pointer group"
+          >
+            <LogOut className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
+            <span>Sign Out</span>
+          </button>
+        </div>
       </header>
 
       {/* Main content */}
@@ -130,22 +137,46 @@ export default function DashboardPage() {
             <h2 className="text-sm font-semibold text-slate-300">Connected Apps</h2>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {connectedApps.map((app) => {
+            {integrationCards.map((app) => {
               const Icon = app.icon;
+              const integration = integrationsByProvider.get(app.provider);
+              const status = integration?.status ?? 'disconnected';
 
               return (
                 <div
-                  key={app.name}
+                  key={app.provider}
                   className="rounded-xl border border-slate-800/80 bg-slate-900/60 p-4 backdrop-blur-md"
                 >
                   <div className="flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-800 bg-slate-950 text-slate-400">
                       <Icon className="h-5 w-5" />
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-slate-200">{app.name}</p>
-                      <p className="text-xs text-slate-500">Not connected</p>
+                      <p
+                        className={
+                          status === 'connected'
+                            ? 'text-xs text-emerald-400'
+                            : status === 'error'
+                              ? 'text-xs text-red-400'
+                              : 'text-xs text-slate-500'
+                        }
+                      >
+                        {integrationsLoading
+                          ? 'Loading'
+                          : status === 'connected'
+                            ? 'Connected'
+                            : status === 'error'
+                              ? 'Error'
+                              : 'Not connected'}
+                      </p>
                     </div>
+                    <Link
+                      href="/integrations"
+                      className="text-xs font-medium text-slate-500 hover:text-slate-200"
+                    >
+                      Manage
+                    </Link>
                   </div>
                 </div>
               );

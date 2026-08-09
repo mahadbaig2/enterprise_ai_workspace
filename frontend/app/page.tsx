@@ -5,8 +5,6 @@ import {
   Sparkles, 
   ArrowRight, 
   ShieldCheck, 
-  Layers, 
-  Search, 
   CheckSquare, 
   Bot,
   Database,

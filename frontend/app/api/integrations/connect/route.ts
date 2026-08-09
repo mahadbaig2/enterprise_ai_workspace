@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Internal Server Error';
+}
+
 export async function POST(req: Request) {
   try {
-    const { provider } = await req.json();
+    const { provider } = (await req.json()) as { provider?: string };
 
-    // Trigger OAuth connection URL generation (Composio or direct OAuth)
     const mockAuthUrls: Record<string, string> = {
       google_drive: 'https://accounts.google.com/o/oauth2/v2/auth?client_id=demo&response_type=code',
       notion: 'https://api.notion.com/v1/oauth/authorize?client_id=demo',
@@ -13,10 +16,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      authUrl: mockAuthUrls[provider] || '#',
+      authUrl: provider ? mockAuthUrls[provider] || '#' : '#',
       provider,
     });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: errorMessage(error) }, { status: 500 });
   }
 }
