@@ -140,12 +140,21 @@ def _bge_rerank(query: str, rows: list[dict[str, Any]]) -> tuple[list[dict[str, 
     endpoint = os.getenv("RERANKER_API_URL")
     if not endpoint or not rows:
         return _lexical_rerank(query, rows), "lexical-fallback"
-    payload = {
-        "model": os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3"),
-        "query": query,
-        "documents": [row.get("content", "") for row in rows],
-        "top_n": len(rows),
-    }
+    is_huggingface = "huggingface.co" in endpoint or "hf-inference" in endpoint
+    if is_huggingface:
+        payload = {
+            "inputs": [
+                {"text": query, "text_pair": row.get("content", "")}
+                for row in rows
+            ]
+        }
+    else:
+        payload = {
+            "model": os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3"),
+            "query": query,
+            "documents": [row.get("content", "") for row in rows],
+            "top_n": len(rows),
+        }
     headers = {"Content-Type": "application/json"}
     if os.getenv("RERANKER_API_KEY"):
         headers["Authorization"] = f"Bearer {os.environ['RERANKER_API_KEY']}"
@@ -153,13 +162,22 @@ def _bge_rerank(query: str, rows: list[dict[str, Any]]) -> tuple[list[dict[str, 
         with httpx.Client(timeout=float(os.getenv("RERANKER_TIMEOUT", "20"))) as client:
             response = client.post(endpoint, headers=headers, json=payload)
             response.raise_for_status()
-            reranked = response.json().get("results", [])
+            data = response.json()
+        if is_huggingface:
+            predictions = data[0] if len(data) == 1 and isinstance(data[0], list) else data
+            reranked = []
+            for index, prediction in enumerate(predictions):
+                if isinstance(prediction, dict):
+                    reranked.append({"index": index, "score": prediction.get("score", 0)})
+        else:
+            reranked = data.get("results", [])
         for item in reranked:
             index = item.get("index")
             if isinstance(index, int) and 0 <= index < len(rows):
                 rows[index]["rerank_score"] = float(item.get("relevance_score", item.get("score", 0)))
         if reranked:
-            return sorted(rows, key=lambda item: item.get("rerank_score", 0), reverse=True), "bge"
+            provider = "bge-huggingface" if is_huggingface else "bge"
+            return sorted(rows, key=lambda item: item.get("rerank_score", 0), reverse=True), provider
     except (httpx.HTTPError, ValueError, TypeError) as exc:
         logger.warning("BGE reranker unavailable; using lexical reranking: %s", exc)
     return _lexical_rerank(query, rows), "lexical-fallback"

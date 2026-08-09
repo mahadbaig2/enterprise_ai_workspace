@@ -1,7 +1,7 @@
 # TODO.md
 
 # Enterprise AI Workspace MVP
-Progress: 55%
+Progress: 75%
 
 ---
 
@@ -212,24 +212,24 @@ Success Criteria
 
 ## Workflow Agent
 
-- [ ] Intent detection
-- [ ] Agent routing
+- [x] Intent detection
+- [x] Agent routing
 
 ---
 
 ## Knowledge Agent
 
-- [ ] Retrieve documents
-- [ ] Generate grounded answers
-- [ ] Return citations
+- [x] Retrieve documents
+- [x] Generate grounded answers
+- [x] Return citations
 
 ---
 
 ## Task Agent
 
-- [ ] Retrieve assigned Jira issues
-- [ ] Create Jira ticket
-- [ ] Update Jira ticket
+- [x] Retrieve assigned Jira issues
+- [x] Create Jira ticket
+- [x] Update Jira ticket
 
 ---
 
@@ -241,12 +241,12 @@ Success Criteria
 
 # Phase 9 — Chat
 
-- [ ] Conversation UI
-- [ ] Streaming responses
-- [ ] Markdown rendering
-- [ ] Citation cards
-- [ ] Conversation history
-- [ ] Delete conversation
+- [x] Conversation UI
+- [x] Streaming responses
+- [x] Markdown rendering
+- [x] Citation cards
+- [x] Conversation history
+- [x] Delete conversation
 
 Success Criteria
 
@@ -344,17 +344,17 @@ Integrations
 
 AI
 
-- [ ] Workflow Agent
-- [ ] Knowledge Agent
-- [ ] Task Agent
+- [x] Workflow Agent
+- [x] Knowledge Agent
+- [x] Task Agent
 
 Features
 
 - [x] RAG
 - [x] BGE Reranker
 - [x] Citations
-- [ ] Chat
-- [ ] Conversation History
+- [x] Chat
+- [x] Conversation History
 
 Deployment
 

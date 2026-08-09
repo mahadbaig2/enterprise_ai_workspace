@@ -1,68 +1,51 @@
 import { NextResponse } from 'next/server';
-import { AgentIntent, classifyIntent, WorkflowRoutingResult } from '@/lib/ai/workflow-agent';
-import { Citation, processKnowledgeQuery } from '@/lib/ai/knowledge-agent';
-import { JiraTask, processTaskQuery } from '@/lib/ai/task-agent';
+import { AgentIntent, classifyIntent } from '@/lib/ai/workflow-agent';
+import { processKnowledgeQuery } from '@/lib/ai/knowledge-agent';
+import { processTaskQuery } from '@/lib/ai/task-agent';
 import { createClient as createSupabaseClient } from '@/lib/supabase/server';
+import { generateGroqCompletion } from '@/lib/ai/groq';
 
-type ChatResponseData = {
-  routing: WorkflowRoutingResult;
-  content: string;
-  citations: Citation[];
-  tasks: JiraTask[];
-};
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Internal Server Error';
-}
-
-async function getAuthorizationHeader(req: Request): Promise<string | undefined> {
-  const requestHeader = req.headers.get('authorization');
-  if (requestHeader) return requestHeader;
-
+async function token(req: Request) {
+  const header = req.headers.get('authorization');
+  if (header) return header;
   const supabase = await createSupabaseClient();
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token ? 'Bearer ' + data.session.access_token : undefined;
 }
 
+function sse(data: { conversationId?: string; routing: unknown; content: string; citations: unknown[]; tasks: unknown[] }) {
+  const encoder = new TextEncoder();
+  const chunks = data.content.match(/.{1,80}(?:\\s|$)|.{1,80}/g) || [data.content];
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode('data: ' + JSON.stringify({ type: 'meta', data: { ...data, content: '' } }) + '\\n\\n'));
+      chunks.forEach((chunk) => controller.enqueue(encoder.encode('data: ' + JSON.stringify({ type: 'delta', content: chunk }) + '\\n\\n')));
+      controller.enqueue(encoder.encode('data: [DONE]\\n\\n'));
+      controller.close();
+    },
+  });
+  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform' } });
+}
+
 export async function POST(req: Request) {
   try {
-    const { prompt, workspaceId } = (await req.json()) as {
-      prompt?: string;
-      workspaceId?: string;
-    };
-
-    if (!prompt || typeof prompt !== 'string') {
-      return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
-    }
-
-    const routingResult = await classifyIntent(prompt);
-    const responseData: ChatResponseData = {
-      routing: routingResult,
-      content: '',
-      citations: [],
-      tasks: [],
-    };
-
-    if (routingResult.targetAgent === 'task') {
-      const taskResult = await processTaskQuery(
-        prompt,
-        routingResult.intent as Extract<AgentIntent, 'TASK_QUERY' | 'TASK_UPDATE' | 'TASK_CREATE'>
-      );
-      responseData.content = taskResult.answer;
-      responseData.tasks = taskResult.tasks || (taskResult.updatedTask ? [taskResult.updatedTask] : []);
+    const body = await req.json() as { prompt?: string; workspaceId?: string; stream?: boolean };
+    if (!body.prompt || typeof body.prompt !== 'string') return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
+    const [routing, auth] = await Promise.all([classifyIntent(body.prompt), token(req)]);
+    const result: { routing: typeof routing; content: string; citations: unknown[]; tasks: unknown[] } = { routing, content: '', citations: [], tasks: [] };
+    if (routing.targetAgent === 'task') {
+      const task = await processTaskQuery(body.prompt, routing.intent as Extract<AgentIntent, 'TASK_QUERY' | 'TASK_UPDATE' | 'TASK_CREATE'>, auth);
+      result.content = task.answer;
+      result.tasks = task.tasks || (task.updatedTask ? [task.updatedTask] : []);
+    } else if (routing.targetAgent === 'general') {
+      result.content = await generateGroqCompletion('You are a helpful enterprise workspace assistant. Answer briefly and naturally.', body.prompt) || 'Hello. How can I help with your connected workspace?';
     } else {
-      const knowledgeResult = await processKnowledgeQuery(
-        prompt,
-        workspaceId,
-        await getAuthorizationHeader(req)
-      );
-      responseData.content = knowledgeResult.answer;
-      responseData.citations = knowledgeResult.citations;
+      const knowledge = await processKnowledgeQuery(body.prompt, body.workspaceId, auth);
+      result.content = knowledge.answer;
+      result.citations = knowledge.citations;
     }
-
-    return NextResponse.json(responseData);
-  } catch (error: unknown) {
-    console.error('Chat API Error:', error);
-    return NextResponse.json({ error: errorMessage(error) }, { status: 500 });
+    return body.stream ? sse(result) : NextResponse.json(result);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Internal Server Error' }, { status: 500 });
   }
 }
