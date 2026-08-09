@@ -1,7 +1,7 @@
 # TODO.md
 
 # Enterprise AI Workspace MVP
-Progress: 0%
+Progress: 55%
 
 ---
 
@@ -117,10 +117,10 @@ Success Criteria
 
 # Phase 4 — Onboarding
 
-- [ ] Welcome screen
-- [ ] Multi-step onboarding
-- [ ] Progress indicator
-- [ ] Completion screen
+- [x] Welcome screen
+- [x] Multi-step onboarding
+- [x] Progress indicator
+- [x] Completion screen
 
 Success Criteria
 
@@ -132,25 +132,25 @@ Success Criteria
 
 ## Google Drive
 
-- [ ] OAuth via Composio
-- [ ] Save connection
-- [ ] Test API access
+- [x] OAuth via Composio
+- [x] Save connection
+- [x] Test API access
 
 ---
 
 ## Notion
 
-- [ ] OAuth via Composio
-- [ ] Save connection
-- [ ] Test API access
+- [x] OAuth via Composio
+- [x] Save connection
+- [x] Test API access
 
 ---
 
 ## Jira
 
-- [ ] OAuth via Composio
-- [ ] Save connection
-- [ ] Test API access
+- [x] OAuth via Composio
+- [x] Save connection
+- [x] Test API access
 
 ---
 
@@ -164,25 +164,25 @@ Success Criteria
 
 Google Drive
 
-- [ ] Retrieve files
-- [ ] Extract text
-- [ ] Store metadata
+- [x] Retrieve files
+- [x] Extract text
+- [x] Store metadata
 
 ---
 
 Notion
 
-- [ ] Retrieve pages
-- [ ] Extract content
-- [ ] Store metadata
+- [x] Retrieve pages
+- [x] Extract content
+- [x] Store metadata
 
 ---
 
 Jira
 
-- [ ] Retrieve user profile
-- [ ] Retrieve assigned issues
-- [ ] Store metadata
+- [x] Retrieve user profile
+- [x] Retrieve assigned issues
+- [x] Store metadata
 
 ---
 
@@ -194,13 +194,13 @@ Success Criteria
 
 # Phase 7 — RAG Pipeline
 
-- [ ] Document chunking
-- [ ] Embedding generation
-- [ ] Store vectors
-- [ ] Metadata filtering
-- [ ] Vector retrieval
-- [ ] BGE reranker
-- [ ] Citation builder
+- [x] Document chunking
+- [x] Embedding generation
+- [x] Store vectors
+- [x] Metadata filtering
+- [x] Vector retrieval
+- [x] BGE reranker
+- [x] Citation builder
 
 Success Criteria
 
@@ -338,9 +338,9 @@ Core Platform
 
 Integrations
 
-- [ ] Google Drive
-- [ ] Notion
-- [ ] Jira
+- [x] Google Drive
+- [x] Notion
+- [x] Jira
 
 AI
 
@@ -350,9 +350,9 @@ AI
 
 Features
 
-- [ ] RAG
-- [ ] BGE Reranker
-- [ ] Citations
+- [x] RAG
+- [x] BGE Reranker
+- [x] Citations
 - [ ] Chat
 - [ ] Conversation History
 

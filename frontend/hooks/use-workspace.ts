@@ -5,16 +5,13 @@ import { useAuth } from '@/hooks/use-auth';
 import { getWorkspace, Workspace } from '@/lib/api/workspace';
 
 export function useWorkspace() {
-  const { session } = useAuth();
+  const { session, loading: authLoading } = useAuth();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!session?.access_token) {
-      setLoading(false);
-      return;
-    }
+    if (authLoading || !session?.access_token) return;
 
     let cancelled = false;
 
@@ -24,8 +21,10 @@ export function useWorkspace() {
         setError(null);
         const data = await getWorkspace(session.access_token);
         if (!cancelled) setWorkspace(data);
-      } catch (err: any) {
-        if (!cancelled) setError(err.message || 'Failed to load workspace.');
+      } catch (err: unknown) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load workspace.');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -36,7 +35,7 @@ export function useWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [session?.access_token]);
+  }, [authLoading, session?.access_token]);
 
-  return { workspace, loading, error };
+  return { workspace, loading: authLoading || loading, error };
 }

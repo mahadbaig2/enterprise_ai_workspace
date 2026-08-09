@@ -73,11 +73,72 @@ CREATE TABLE IF NOT EXISTS public.integrations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
     provider TEXT NOT NULL, -- 'google_drive', 'notion', 'jira'
-    connection_id TEXT,
-    status TEXT NOT NULL DEFAULT 'disconnected', -- 'connected', 'disconnected', 'error'
+    status TEXT NOT NULL DEFAULT 'disconnected',
+    composio_connection_id TEXT,
+    connected_account_email TEXT,
+    connected_at TIMESTAMP WITH TIME ZONE,
+    error_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     UNIQUE(workspace_id, provider)
 );
+
+ALTER TABLE public.integrations
+ADD COLUMN IF NOT EXISTS composio_connection_id TEXT,
+ADD COLUMN IF NOT EXISTS connected_account_email TEXT,
+ADD COLUMN IF NOT EXISTS connected_at TIMESTAMP WITH TIME ZONE,
+ADD COLUMN IF NOT EXISTS error_message TEXT,
+ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL;
+
+CREATE OR REPLACE FUNCTION public.seed_workspace_integrations()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    INSERT INTO public.integrations (workspace_id, provider)
+    VALUES
+        (NEW.id, 'google_drive'),
+        (NEW.id, 'notion'),
+        (NEW.id, 'jira')
+    ON CONFLICT (workspace_id, provider) DO NOTHING;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS seed_workspace_integrations_trigger ON public.workspaces;
+CREATE TRIGGER seed_workspace_integrations_trigger
+AFTER INSERT ON public.workspaces
+FOR EACH ROW
+EXECUTE FUNCTION public.seed_workspace_integrations();
+
+INSERT INTO public.integrations (workspace_id, provider)
+SELECT id, provider
+FROM public.workspaces
+CROSS JOIN (
+    VALUES ('google_drive'), ('notion'), ('jira')
+) AS providers(provider)
+ON CONFLICT (workspace_id, provider) DO NOTHING;
+
+DELETE FROM public.integrations
+WHERE provider NOT IN ('google_drive', 'notion', 'jira');
+
+ALTER TABLE public.integrations
+DROP CONSTRAINT IF EXISTS integrations_provider_check;
+
+ALTER TABLE public.integrations
+ADD CONSTRAINT integrations_provider_check
+CHECK (provider IN ('google_drive', 'notion', 'jira'));
+
+ALTER TABLE public.integrations
+DROP CONSTRAINT IF EXISTS integrations_status_check;
+
+ALTER TABLE public.integrations
+ADD CONSTRAINT integrations_status_check
+CHECK (status IN ('connected', 'disconnected', 'error'));
+
 
 -- 6. DOCUMENTS TABLE (Hybrid Search: pgvector + Full-Text Search)
 CREATE TABLE IF NOT EXISTS public.documents (
@@ -88,12 +149,22 @@ CREATE TABLE IF NOT EXISTS public.documents (
     title TEXT NOT NULL,
     content TEXT NOT NULL,
     url TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
     embedding VECTOR(1536), -- Supports 1536d embeddings (OpenAI / standard embeddings)
     fts TSVECTOR GENERATED ALWAYS AS (
         to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, ''))
     ) STORED,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    UNIQUE(workspace_id, source, external_id)
 );
+
+ALTER TABLE public.documents
+ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb,
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS documents_workspace_source_external_id_idx
+ON public.documents (workspace_id, source, external_id);
 
 -- Index for Vector Search (HNSW)
 CREATE INDEX IF NOT EXISTS documents_embedding_idx 
@@ -105,7 +176,58 @@ CREATE INDEX IF NOT EXISTS documents_fts_idx
 ON public.documents 
 USING gin (fts);
 
--- 7. CONVERSATIONS TABLE
+-- 7. SYNC RUNS TABLE
+CREATE TABLE IF NOT EXISTS public.sync_runs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    retrieved_count INTEGER NOT NULL DEFAULT 0,
+    stored_count INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+ALTER TABLE public.sync_runs
+DROP CONSTRAINT IF EXISTS sync_runs_provider_check;
+
+ALTER TABLE public.sync_runs
+ADD CONSTRAINT sync_runs_provider_check
+CHECK (provider IN ('google_drive', 'notion', 'jira'));
+
+ALTER TABLE public.sync_runs
+DROP CONSTRAINT IF EXISTS sync_runs_status_check;
+
+ALTER TABLE public.sync_runs
+ADD CONSTRAINT sync_runs_status_check
+CHECK (status IN ('running', 'success', 'error'));
+
+CREATE INDEX IF NOT EXISTS sync_runs_workspace_started_at_idx
+ON public.sync_runs (workspace_id, started_at DESC);
+
+-- 8. JIRA ISSUES TABLE
+CREATE TABLE IF NOT EXISTS public.jira_issues (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
+    issue_key TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    status TEXT,
+    priority TEXT,
+    assignee_email TEXT,
+    url TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    UNIQUE(workspace_id, issue_key)
+);
+
+CREATE INDEX IF NOT EXISTS jira_issues_workspace_status_idx
+ON public.jira_issues (workspace_id, status);
+
+
+-- 9. CONVERSATIONS TABLE
 CREATE TABLE IF NOT EXISTS public.conversations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
@@ -115,7 +237,7 @@ CREATE TABLE IF NOT EXISTS public.conversations (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 8. MESSAGES TABLE
+-- 10. MESSAGES TABLE
 CREATE TABLE IF NOT EXISTS public.messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id UUID NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
@@ -127,7 +249,7 @@ CREATE TABLE IF NOT EXISTS public.messages (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 9. HYBRID SEARCH STORED FUNCTION (Semantic Vector + FTS Keyword Match)
+-- 11. HYBRID SEARCH STORED FUNCTION (Semantic Vector + FTS Keyword Match)
 CREATE OR REPLACE FUNCTION match_documents(
     query_text TEXT,
     query_embedding VECTOR(1536),
@@ -180,6 +302,8 @@ ALTER TABLE public.workspace_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.onboarding ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.integrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sync_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.jira_issues ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 
@@ -200,6 +324,122 @@ BEGIN
     ) THEN
         CREATE POLICY "Users can access onboarding for owned workspace"
         ON public.onboarding
+        FOR ALL
+        USING (
+            workspace_id IN (
+                SELECT id
+                FROM public.workspaces
+                WHERE owner_id = (SELECT auth.uid())
+            )
+        )
+        WITH CHECK (
+            workspace_id IN (
+                SELECT id
+                FROM public.workspaces
+                WHERE owner_id = (SELECT auth.uid())
+            )
+        );
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'integrations'
+          AND policyname = 'Users can access integrations for owned workspace'
+    ) THEN
+        CREATE POLICY "Users can access integrations for owned workspace"
+        ON public.integrations
+        FOR ALL
+        USING (
+            workspace_id IN (
+                SELECT id
+                FROM public.workspaces
+                WHERE owner_id = (SELECT auth.uid())
+            )
+        )
+        WITH CHECK (
+            workspace_id IN (
+                SELECT id
+                FROM public.workspaces
+                WHERE owner_id = (SELECT auth.uid())
+            )
+        );
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'documents'
+          AND policyname = 'Users can access documents for owned workspace'
+    ) THEN
+        CREATE POLICY "Users can access documents for owned workspace"
+        ON public.documents
+        FOR ALL
+        USING (
+            workspace_id IN (
+                SELECT id
+                FROM public.workspaces
+                WHERE owner_id = (SELECT auth.uid())
+            )
+        )
+        WITH CHECK (
+            workspace_id IN (
+                SELECT id
+                FROM public.workspaces
+                WHERE owner_id = (SELECT auth.uid())
+            )
+        );
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'sync_runs'
+          AND policyname = 'Users can access sync runs for owned workspace'
+    ) THEN
+        CREATE POLICY "Users can access sync runs for owned workspace"
+        ON public.sync_runs
+        FOR ALL
+        USING (
+            workspace_id IN (
+                SELECT id
+                FROM public.workspaces
+                WHERE owner_id = (SELECT auth.uid())
+            )
+        )
+        WITH CHECK (
+            workspace_id IN (
+                SELECT id
+                FROM public.workspaces
+                WHERE owner_id = (SELECT auth.uid())
+            )
+        );
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'jira_issues'
+          AND policyname = 'Users can access jira issues for owned workspace'
+    ) THEN
+        CREATE POLICY "Users can access jira issues for owned workspace"
+        ON public.jira_issues
         FOR ALL
         USING (
             workspace_id IN (

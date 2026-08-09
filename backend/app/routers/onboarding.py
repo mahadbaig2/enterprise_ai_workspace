@@ -10,6 +10,9 @@ from app.utils.supabase_client import get_admin_client
 
 router = APIRouter()
 
+TOTAL_ONBOARDING_STEPS = 5
+REQUIRED_INTEGRATIONS = ("google_drive", "notion", "jira")
+
 
 def _is_missing_onboarding_table(exc: APIError) -> bool:
     return "PGRST205" in str(exc) and "public.onboarding" in str(exc)
@@ -82,6 +85,23 @@ def _create_onboarding_row(workspace_id: str) -> OnboardingResponse:
     return _row_to_response(result.data[0])
 
 
+def _missing_required_integrations(workspace_id: str) -> list[str]:
+    db = get_admin_client()
+    result = (
+        db.table("integrations")
+        .select("provider,status")
+        .eq("workspace_id", workspace_id)
+        .in_("provider", list(REQUIRED_INTEGRATIONS))
+        .execute()
+    )
+    status_by_provider = {row["provider"]: row["status"] for row in result.data or []}
+    return [
+        provider
+        for provider in REQUIRED_INTEGRATIONS
+        if status_by_provider.get(provider) != "connected"
+    ]
+
+
 @router.get("", response_model=OnboardingResponse)
 def get_onboarding(
     current_user: CurrentUser = Depends(get_current_user),
@@ -121,12 +141,30 @@ def update_onboarding(
     }
 
     if payload.current_step is not None:
+        if payload.current_step < 1 or payload.current_step > TOTAL_ONBOARDING_STEPS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"current_step must be between 1 and {TOTAL_ONBOARDING_STEPS}.",
+            )
         update_data["current_step"] = payload.current_step
 
     if payload.completed is not None:
-        update_data["completed"] = payload.completed
         if payload.completed:
+            missing = _missing_required_integrations(workspace_id)
+            if missing:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Complete onboarding requires connected integrations: "
+                        + ", ".join(missing)
+                    ),
+                )
+            update_data["current_step"] = TOTAL_ONBOARDING_STEPS
             update_data["completed_at"] = datetime.now(timezone.utc).isoformat()
+        else:
+            update_data["completed_at"] = None
+
+        update_data["completed"] = payload.completed
 
     try:
         result = (

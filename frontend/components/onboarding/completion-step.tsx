@@ -3,8 +3,10 @@ import { Button } from '@/components/ui/button';
 
 const summary = [
   'Workspace created',
-  'Connect tools later in Settings',
-  'Upload documents later from your dashboard',
+  'Google Drive connected',
+  'Notion connected',
+  'Jira connected',
+  'Initial synchronization is ready to start',
 ];
 
 export function CompletionStep({ onComplete }: { onComplete: () => void }) {
@@ -17,7 +19,7 @@ export function CompletionStep({ onComplete }: { onComplete: () => void }) {
         You&apos;re all set!
       </h1>
       <p className="mx-auto mt-3 max-w-md text-base leading-7 text-slate-600">
-        Your workspace is ready. Head to your dashboard to start asking questions.
+        Your required enterprise tools are connected. Head to your dashboard to start asking questions.
       </p>
 
       <div className="mx-auto mt-8 max-w-sm rounded-lg border border-slate-200 bg-white p-4 text-left">

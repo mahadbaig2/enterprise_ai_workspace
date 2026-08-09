@@ -1,4 +1,4 @@
-import { Bot, FileSearch, MailPlus } from 'lucide-react';
+import { Bot, FileSearch, TicketCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const features = [
@@ -11,19 +11,17 @@ const features = [
     text: "Ask questions and get cited answers from your company's documents",
   },
   {
-    icon: MailPlus,
-    text: 'Manage Jira tasks and draft emails without leaving this tab',
+    icon: TicketCheck,
+    text: 'Retrieve, create, and update Jira tasks without leaving this tab',
   },
 ];
 
 export function WelcomeStep({
   workspaceName,
   onNext,
-  onSkipSetup,
 }: {
   workspaceName: string;
   onNext: () => void;
-  onSkipSetup: () => void;
 }) {
   return (
     <section className="w-full max-w-2xl text-center">
@@ -31,7 +29,7 @@ export function WelcomeStep({
         Welcome to {workspaceName}
       </h1>
       <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-slate-600">
-        Your AI workspace is ready. Let&apos;s connect your tools so we can get to work.
+        Your AI workspace is ready. Connect the required enterprise systems to complete setup.
       </p>
 
       <div className="mt-8 grid gap-3 text-left">
@@ -56,13 +54,6 @@ export function WelcomeStep({
         <Button onClick={onNext} className="min-w-40">
           Get Started
         </Button>
-        <button
-          type="button"
-          onClick={onSkipSetup}
-          className="text-sm text-slate-500 underline-offset-4 hover:text-slate-950 hover:underline"
-        >
-          Skip setup, take me to dashboard
-        </button>
       </div>
     </section>
   );
