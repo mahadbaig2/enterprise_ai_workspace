@@ -3,7 +3,6 @@ import { AgentIntent, classifyIntent } from '@/lib/ai/workflow-agent';
 import { processKnowledgeQuery } from '@/lib/ai/knowledge-agent';
 import { processTaskQuery } from '@/lib/ai/task-agent';
 import { createClient as createSupabaseClient } from '@/lib/supabase/server';
-import { generateGroqCompletion } from '@/lib/ai/groq';
 
 async function token(req: Request) {
   const header = req.headers.get('authorization');
@@ -13,39 +12,66 @@ async function token(req: Request) {
   return data.session?.access_token ? 'Bearer ' + data.session.access_token : undefined;
 }
 
-function sse(data: { conversationId?: string; routing: unknown; content: string; citations: unknown[]; tasks: unknown[] }) {
+function sse(data: { conversationId?: string; routing: unknown; content: string; citations: unknown[]; tasks: unknown[]; retrievalStatus?: string }) {
   const encoder = new TextEncoder();
-  const chunks = data.content.match(/.{1,80}(?:\\s|$)|.{1,80}/g) || [data.content];
+  const SEP = '\n\n';
+  const chunks = data.content.match(/.{1,80}(?:\s|$)|.{1,80}/g) || [data.content];
   const stream = new ReadableStream({
     start(controller) {
-      controller.enqueue(encoder.encode('data: ' + JSON.stringify({ type: 'meta', data: { ...data, content: '' } }) + '\\n\\n'));
-      chunks.forEach((chunk) => controller.enqueue(encoder.encode('data: ' + JSON.stringify({ type: 'delta', content: chunk }) + '\\n\\n')));
-      controller.enqueue(encoder.encode('data: [DONE]\\n\\n'));
+      controller.enqueue(encoder.encode('data: ' + JSON.stringify({ type: 'meta', data: { ...data, content: '' } }) + SEP));
+      chunks.forEach((chunk) =>
+        controller.enqueue(encoder.encode('data: ' + JSON.stringify({ type: 'delta', content: chunk }) + SEP))
+      );
+      controller.enqueue(encoder.encode('data: [DONE]' + SEP));
       controller.close();
     },
   });
-  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform' } });
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+    },
+  });
 }
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json() as { prompt?: string; workspaceId?: string; stream?: boolean };
-    if (!body.prompt || typeof body.prompt !== 'string') return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
-    const [routing, auth] = await Promise.all([classifyIntent(body.prompt), token(req)]);
-    const result: { routing: typeof routing; content: string; citations: unknown[]; tasks: unknown[] } = { routing, content: '', citations: [], tasks: [] };
+    const body = await req.json() as { prompt?: string; workspaceId?: string; stream?: boolean; context?: string; confirmation?: { approved?: boolean; proposal?: Parameters<typeof processTaskQuery>[4] } };
+    if (!body.prompt || typeof body.prompt !== 'string') {
+      return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
+    }
+    const routing = await classifyIntent(body.prompt);
+    const auth = routing.targetAgent === 'general' ? undefined : await token(req);
+  const result: { routing: typeof routing; content: string; citations: unknown[]; tasks: unknown[]; retrievalStatus?: string } = {
+      routing,
+      content: '',
+      citations: [],
+      tasks: [],
+    };
     if (routing.targetAgent === 'task') {
-      const task = await processTaskQuery(body.prompt, routing.intent as Extract<AgentIntent, 'TASK_QUERY' | 'TASK_UPDATE' | 'TASK_CREATE'>, auth);
+      const task = await processTaskQuery(
+        body.prompt,
+        routing.intent as Extract<AgentIntent, 'TASK_QUERY' | 'TASK_UPDATE' | 'TASK_CREATE'>,
+        auth,
+        body.confirmation?.approved === true,
+        body.confirmation?.proposal
+      );
       result.content = task.answer;
       result.tasks = task.tasks || (task.updatedTask ? [task.updatedTask] : []);
+      if (task.requiresConfirmation) result.tasks = [{ ...task.proposal, requiresConfirmation: true }];
     } else if (routing.targetAgent === 'general') {
-      result.content = await generateGroqCompletion('You are a helpful enterprise workspace assistant. Answer briefly and naturally.', body.prompt) || 'Hello. How can I help with your connected workspace?';
+      result.content = 'Hello! How can I help with your connected workspace?';
     } else {
-      const knowledge = await processKnowledgeQuery(body.prompt, body.workspaceId, auth);
+      const knowledge = await processKnowledgeQuery(body.prompt, body.workspaceId, auth, body.context);
       result.content = knowledge.answer;
       result.citations = knowledge.citations;
+      result.retrievalStatus = knowledge.retrievalStatus;
     }
     return body.stream ? sse(result) : NextResponse.json(result);
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Internal Server Error' },
+      { status: 500 }
+    );
   }
 }

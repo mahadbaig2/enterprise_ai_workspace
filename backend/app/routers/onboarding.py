@@ -150,15 +150,8 @@ def update_onboarding(
 
     if payload.completed is not None:
         if payload.completed:
-            missing = _missing_required_integrations(workspace_id)
-            if missing:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=(
-                        "Complete onboarding requires connected integrations: "
-                        + ", ".join(missing)
-                    ),
-                )
+            # Tool connections are optional — users can connect them later
+            # from the integrations page on the dashboard.
             update_data["current_step"] = TOTAL_ONBOARDING_STEPS
             update_data["completed_at"] = datetime.now(timezone.utc).isoformat()
         else:

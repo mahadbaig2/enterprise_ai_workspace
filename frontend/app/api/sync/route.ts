@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     }
 
     const syncData = await res.json();
-    if (provider !== 'jira') {
+    {
       const indexRes = await fetch(BACKEND_URL + '/rag/index', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: authHeader },

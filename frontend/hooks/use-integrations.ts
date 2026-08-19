@@ -8,6 +8,7 @@ import {
   getIntegrations,
   Integration,
   testIntegration,
+  syncIntegration,
 } from '@/lib/api/integrations';
 
 export function useIntegrations() {
@@ -101,6 +102,29 @@ export function useIntegrations() {
     [refresh, token]
   );
 
+  const sync = useCallback(
+    async (provider: string) => {
+      if (!token) {
+        setError('You must be signed in to sync an integration.');
+        return false;
+      }
+
+      try {
+        setPendingProvider(provider);
+        setError(null);
+        await syncIntegration(provider, token);
+        await refresh();
+        return true;
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Failed to sync integration.');
+        return false;
+      } finally {
+        setPendingProvider(null);
+      }
+    },
+    [refresh, token]
+  );
+
   const connectedProviders = useMemo(
     () =>
       new Set(
@@ -120,6 +144,7 @@ export function useIntegrations() {
     connect,
     disconnect,
     test,
+    sync,
     refresh,
   };
 }

@@ -4,7 +4,7 @@ import { createClient } from '../supabase/server';
 export interface Citation {
   id: string;
   title: string;
-  source: 'google_drive' | 'notion' | 'other';
+  source: 'google_drive' | 'notion' | 'jira' | 'other';
   url?: string;
   snippet: string;
 }
@@ -12,6 +12,8 @@ export interface Citation {
 export interface KnowledgeAgentResponse {
   answer: string;
   citations: Citation[];
+  retrievalStatus: 'ok' | 'no_evidence' | 'retrieval_failure' | 'llm_failure';
+  error?: string;
 }
 
 type KnowledgeDocument = {
@@ -25,16 +27,18 @@ type KnowledgeDocument = {
 };
 
 function normalizeSource(source: string): Citation['source'] {
-  if (source === 'google_drive' || source === 'notion') return source;
+  if (source === 'google_drive' || source === 'notion' || source === 'jira') return source;
   return 'other';
 }
 
 export async function processKnowledgeQuery(
   userQuery: string,
   workspaceId?: string,
-  authorization?: string
+  authorization?: string,
+  conversationContext?: string
 ): Promise<KnowledgeAgentResponse> {
   let documents: KnowledgeDocument[] = [];
+  let retrievalError: string | undefined;
 
   try {
     if (authorization && workspaceId) {
@@ -45,12 +49,16 @@ export async function processKnowledgeQuery(
         body: JSON.stringify({ query: userQuery, match_count: 8 }),
         cache: 'no-store',
       });
-      if (!response.ok) {
+      if (response.ok) {
+        const rag = (await response.json()) as { results?: KnowledgeDocument[] };
+        documents = rag.results || [];
+      } else {
         throw new Error('RAG search failed with status ' + response.status);
       }
-      const rag = (await response.json()) as { results?: KnowledgeDocument[] };
-      documents = rag.results || [];
-    } else {
+    }
+
+    // Keep chat useful when the backend RAG service is temporarily unavailable.
+    if (documents.length === 0) {
       const supabase = await createClient();
       const { data, error } = await supabase.rpc('match_document_chunks', {
         query_text: userQuery,
@@ -66,6 +74,7 @@ export async function processKnowledgeQuery(
       }
     }
   } catch (err) {
+    retrievalError = err instanceof Error ? err.message : 'The connected knowledge search failed.';
     console.warn('RAG retrieval failed:', err);
   }
 
@@ -90,12 +99,25 @@ export async function processKnowledgeQuery(
     'Keep the response professional, concise, and structured in markdown.\n\n' +
     'DOCUMENT CONTEXT:\n' + contextText;
 
-  const llmResponse = await generateGroqCompletion(systemPrompt, userQuery);
-  const answer = llmResponse || (documents.length > 0
+  let llmResponse = '';
+  let llmError: string | undefined;
+  try {
+    llmResponse = await generateGroqCompletion(systemPrompt, conversationContext ? `Recent conversation:\n${conversationContext}\n\nCurrent question:\n${userQuery}` : userQuery);
+  } catch (err) {
+    llmError = err instanceof Error ? err.message : 'The language model failed.';
+  }
+  const answer = llmResponse || (llmError
+    ? 'I retrieved workspace evidence, but the answer generator failed. Please try again.'
+    : documents.length > 0
     ? 'I found ' + documents.length + ' relevant workspace document' +
       (documents.length === 1 ? '' : 's') +
       '. Review the citations below for the grounded source text.'
     : 'I could not find this information in the connected workspace documents.');
 
-  return { answer, citations };
+  return {
+    answer: llmError && documents.length ? 'I retrieved supporting workspace evidence, but the answer generator failed. Review the citations below.' : answer,
+    citations,
+    retrievalStatus: llmError ? 'llm_failure' : retrievalError && !documents.length ? 'retrieval_failure' : documents.length ? 'ok' : 'no_evidence',
+    error: llmError || retrievalError,
+  };
 }

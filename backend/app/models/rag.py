@@ -3,7 +3,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-RagSource = Literal["google_drive", "notion"]
+RagSource = Literal["google_drive", "notion", "jira"]
 
 
 class RagSearchRequest(BaseModel):

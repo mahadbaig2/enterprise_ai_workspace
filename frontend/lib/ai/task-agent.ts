@@ -2,7 +2,8 @@ import { generateGroqCompletion } from './groq';
 
 export interface JiraTask { key: string; summary: string; status?: string | null; assignee?: string | null; priority?: string | null; url?: string | null; metadata?: Record<string, unknown>; }
 export interface JiraProject { key: string; name: string; project_type?: string | null; url?: string | null; }
-export interface TaskAgentResult { action: 'READ' | 'CREATE' | 'UPDATE'; answer: string; tasks?: JiraTask[]; updatedTask?: JiraTask; }
+export interface JiraProposal { action: 'CREATE' | 'UPDATE'; issueKey?: string; summary?: string; description?: string; projectKey?: string; status?: string; priority?: string; }
+export interface TaskAgentResult { action: 'READ' | 'CREATE' | 'UPDATE'; answer: string; tasks?: JiraTask[]; updatedTask?: JiraTask; requiresConfirmation?: boolean; proposal?: JiraProposal; }
 
 async function taskRequest(path: string, authorization: string, init?: RequestInit) {
   const base = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
@@ -18,7 +19,7 @@ function requestedProjectKey(query: string): string | undefined {
   return (explicit || issueKey)?.toUpperCase();
 }
 
-export async function processTaskQuery(userQuery: string, intent: 'TASK_QUERY' | 'TASK_UPDATE' | 'TASK_CREATE', authorization?: string): Promise<TaskAgentResult> {
+export async function processTaskQuery(userQuery: string, intent: 'TASK_QUERY' | 'TASK_UPDATE' | 'TASK_CREATE', authorization?: string, confirmed = false, proposal?: JiraProposal): Promise<TaskAgentResult> {
   if (!authorization) return { action: 'READ', answer: 'Please sign in before using Jira task actions.' };
   try {
     if (intent === 'TASK_QUERY') {
@@ -37,14 +38,16 @@ export async function processTaskQuery(userQuery: string, intent: 'TASK_QUERY' |
           return { action: 'CREATE', answer: projects.length ? 'Which Jira project should receive this ticket? Reply with its project key.\n\n' + choices : 'No Jira projects are available to your connected account.' };
         }
       }
-      const summary = userQuery.replace(/create|new|ticket|jira|bug|task/gi, '').replace(/\b(?:in|project)\s+[A-Z][A-Z0-9]+\b/gi, '').replace(/\s+/g, ' ').trim() || 'New issue';
+      const summary = proposal?.summary || userQuery.replace(/create|new|ticket|jira|bug|task/gi, '').replace(/\b(?:in|project)\s+[A-Z][A-Z0-9]+\b/gi, '').replace(/\s+/g, ' ').trim() || 'New issue';
+      if (!confirmed) return { action: 'CREATE', answer: `I’m ready to create **${summary}** in **${projectKey}**. Please confirm this Jira action.`, requiresConfirmation: true, proposal: { action: 'CREATE', summary, description: userQuery, projectKey } };
       const task = (await taskRequest('/tasks', authorization, { method: 'POST', body: JSON.stringify({ summary, description: userQuery, project_key: projectKey }) })).task as JiraTask;
       return { action: 'CREATE', answer: 'Created Jira ticket **' + task.key + '** in project **' + projectKey + '**: ' + task.summary + '.', updatedTask: task, tasks: [task] };
     }
     const key = userQuery.match(/([A-Z][A-Z0-9]+-\d+)/i)?.[1]?.toUpperCase();
     if (!key) return { action: 'UPDATE', answer: 'Please include a Jira issue key, such as **PROJ-123**, for the update.' };
-    const status = userQuery.match(/(?:to|as|status)\s+(To Do|In Progress|In Review|Done)/i)?.[1] || (/(done|complete|completed|close)/i.test(userQuery) ? 'Done' : '');
+    const status = proposal?.status || userQuery.match(/(?:to|as|status)\s+(To Do|In Progress|In Review|Done)/i)?.[1] || (/(done|complete|completed|close)/i.test(userQuery) ? 'Done' : '');
     if (!status) return { action: 'UPDATE', answer: 'Please specify a target Jira status, such as **Done** or **In Progress**.' };
+    if (!confirmed) return { action: 'UPDATE', answer: `I’m ready to update **${key}** to **${status}**. Please confirm this Jira action.`, requiresConfirmation: true, proposal: { action: 'UPDATE', issueKey: key, status } };
     const task = (await taskRequest('/tasks/' + key, authorization, { method: 'PATCH', body: JSON.stringify({ status }) })).task as JiraTask;
     return { action: 'UPDATE', answer: 'Updated Jira ticket **' + task.key + '** to **' + (task.status || status) + '**.', updatedTask: task, tasks: [task] };
   } catch (error) {

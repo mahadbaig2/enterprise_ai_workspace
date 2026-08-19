@@ -50,6 +50,10 @@ def _row_to_response(row: dict) -> IntegrationResponse:
         connected_account_email=row.get("connected_account_email"),
         connected_at=row.get("connected_at"),
         error_message=row.get("error_message"),
+        last_sync_at=row.get("last_sync_at"),
+        last_index_at=row.get("last_index_at"),
+        last_sync_status=row.get("last_sync_status"),
+        last_sync_counts=row.get("last_sync_counts") or {},
     )
 
 
@@ -328,6 +332,13 @@ def integration_callback(
             .eq("provider", provider)
             .execute()
         )
+        # Initial indexing is best-effort: a provider connection must remain usable
+        # even when the first provider fetch is temporarily unavailable.
+        try:
+            from app.routers.sync import _sync_provider
+            _sync_provider(workspace_id, provider)
+        except Exception as exc:
+            db.table("integrations").update({"last_sync_status": "error", "last_sync_error": str(exc)}).eq("workspace_id", workspace_id).eq("provider", provider).execute()
         return _row_to_response(result.data[0])
 
     db.table("integrations").update(

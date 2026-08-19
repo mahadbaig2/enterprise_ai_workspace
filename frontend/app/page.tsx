@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useAuth } from '@/hooks/use-auth';
 import { 
   Sparkles, 
   ArrowRight, 
@@ -12,6 +13,7 @@ import {
 } from 'lucide-react';
 
 export default function LandingPage() {
+  const { user, loading, signOut } = useAuth();
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between relative overflow-hidden font-sans">
       {/* Background Glows */}
@@ -31,18 +33,39 @@ export default function LandingPage() {
         </div>
 
         <div className="flex items-center space-x-4">
-          <Link
-            href="/login"
-            className="px-4 py-2 text-slate-300 hover:text-white font-medium text-sm transition-colors"
-          >
-            Sign In
-          </Link>
-          <Link
-            href="/signup"
-            className="px-5 py-2.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-medium text-sm rounded-xl shadow-lg shadow-red-600/20 transition-all cursor-pointer"
-          >
-            Get Started
-          </Link>
+          {loading ? (
+            <div className="w-20 h-8 bg-slate-800/50 animate-pulse rounded-lg" />
+          ) : user ? (
+            <>
+              <Link
+                href="/dashboard"
+                className="px-4 py-2 text-slate-300 hover:text-white font-medium text-sm transition-colors"
+              >
+                Dashboard
+              </Link>
+              <button
+                onClick={() => signOut('global')}
+                className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-medium text-sm rounded-xl border border-slate-700 transition-all cursor-pointer"
+              >
+                Sign Out
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                className="px-4 py-2 text-slate-300 hover:text-white font-medium text-sm transition-colors"
+              >
+                Sign In
+              </Link>
+              <Link
+                href="/signup"
+                className="px-5 py-2.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-medium text-sm rounded-xl shadow-lg shadow-red-600/20 transition-all cursor-pointer"
+              >
+                Get Started
+              </Link>
+            </>
+          )}
         </div>
       </header>
 
@@ -65,19 +88,41 @@ export default function LandingPage() {
         </p>
 
         <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
-          <Link
-            href="/dashboard"
-            className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-semibold text-base rounded-2xl shadow-xl shadow-red-600/25 transition-all flex items-center justify-center space-x-3 group cursor-pointer"
-          >
-            <span>Launch AI Workspace</span>
-            <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-          </Link>
-          <Link
-            href="/login"
-            className="w-full sm:w-auto px-8 py-4 bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-800 font-semibold text-base rounded-2xl transition-all cursor-pointer"
-          >
-            Password Sign In
-          </Link>
+          {loading ? (
+            <div className="w-48 h-14 bg-slate-900/50 animate-pulse rounded-2xl" />
+          ) : user ? (
+            <>
+              <Link
+                href="/dashboard"
+                className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-semibold text-base rounded-2xl shadow-xl shadow-red-600/25 transition-all flex items-center justify-center space-x-3 group cursor-pointer"
+              >
+                <span>Launch AI Workspace</span>
+                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </Link>
+              <button
+                onClick={() => signOut('global')}
+                className="w-full sm:w-auto px-8 py-4 bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-800 hover:border-slate-700 font-semibold text-base rounded-2xl transition-all cursor-pointer"
+              >
+                Sign Out of All Sessions
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/dashboard"
+                className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-semibold text-base rounded-2xl shadow-xl shadow-red-600/25 transition-all flex items-center justify-center space-x-3 group cursor-pointer"
+              >
+                <span>Launch AI Workspace</span>
+                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </Link>
+              <Link
+                href="/login"
+                className="w-full sm:w-auto px-8 py-4 bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-800 font-semibold text-base rounded-2xl transition-all cursor-pointer"
+              >
+                Password Sign In
+              </Link>
+            </>
+          )}
         </div>
 
         {/* Core Pillars Feature Grid */}

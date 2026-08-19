@@ -10,6 +10,10 @@ export interface Integration {
   connected_account_email: string | null;
   connected_at: string | null;
   error_message: string | null;
+  last_sync_at?: string | null;
+  last_index_at?: string | null;
+  last_sync_status?: string | null;
+  last_sync_counts?: { retrieved?: number; stored?: number; chunks?: number };
 }
 
 export interface ConnectResponse {
@@ -117,4 +121,22 @@ export async function disconnectIntegration(
   });
 
   if (!res.ok) throw new Error(await readError(res));
+}
+
+export async function syncIntegration(
+  provider: string,
+  token: string
+): Promise<unknown> {
+  const res = await fetch('/api/sync', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ provider }),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
 }

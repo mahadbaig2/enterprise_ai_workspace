@@ -1,7 +1,8 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { Loader2, Plug } from 'lucide-react';
+import { ArrowLeft, Loader2, Plug } from 'lucide-react';
 import { AlertDialog } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { useIntegrations } from '@/hooks/use-integrations';
@@ -46,7 +47,7 @@ function StatusBadge({
 }
 
 export default function IntegrationsPage() {
-  const { integrations, loading, error, pendingProvider, connect, disconnect } =
+  const { integrations, loading, error, pendingProvider, connect, disconnect, sync } =
     useIntegrations();
   const [disconnectProvider, setDisconnectProvider] = useState<string | null>(null);
 
@@ -71,6 +72,12 @@ export default function IntegrationsPage() {
               Connect your tools to let the AI search and act across your workspace.
             </p>
           </div>
+          <Link href="/dashboard">
+            <Button variant="outline" className="shrink-0">
+              <ArrowLeft className="h-4 w-4" />
+              Back to Dashboard
+            </Button>
+          </Link>
         </div>
 
         {error && (
@@ -111,24 +118,38 @@ export default function IntegrationsPage() {
 
                   <h2 className="mt-4 text-base font-semibold">{meta.name}</h2>
                   <p className="mt-1 text-sm text-slate-600">{meta.description}</p>
+                  {connected && integration?.last_sync_at && <p className="mt-2 text-xs text-slate-500">Last sync: {new Date(integration.last_sync_at).toLocaleString()} · {integration.last_sync_counts?.chunks ?? 0} indexed chunks</p>}
 
-                  <Button
-                    variant={connected ? 'outline' : 'default'}
-                    onClick={() =>
-                      connected
-                        ? setDisconnectProvider(meta.provider)
-                        : connect(meta.provider)
-                    }
-                    disabled={pending}
-                    className={
-                      connected
-                        ? 'mt-5 w-full border-red-200 text-red-700 hover:bg-red-50'
-                        : 'mt-5 w-full'
-                    }
-                  >
-                    {pending && <Loader2 className="h-4 w-4 animate-spin" />}
-                    {connected ? 'Disconnect' : status === 'error' ? 'Reconnect' : 'Connect'}
-                  </Button>
+                  <div className={connected ? 'mt-5 grid gap-2 sm:grid-cols-2' : 'mt-5'}>
+                    <Button
+                      variant={connected ? 'outline' : 'default'}
+                      onClick={() =>
+                        connected
+                          ? setDisconnectProvider(meta.provider)
+                          : connect(meta.provider)
+                      }
+                      disabled={pending}
+                      className={
+                        connected
+                          ? 'w-full border-red-200 text-red-700 hover:bg-red-50'
+                          : 'w-full'
+                      }
+                    >
+                      {pending && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {connected ? 'Disconnect' : status === 'error' ? 'Reconnect' : 'Connect'}
+                    </Button>
+                    {connected && (
+                      <Button
+                        variant="outline"
+                        onClick={() => void sync(meta.provider)}
+                        disabled={pending}
+                        className="w-full"
+                      >
+                        {pending && <Loader2 className="h-4 w-4 animate-spin" />}
+                        Sync now
+                      </Button>
+                    )}
+                  </div>
                 </div>
               );
             })}
