@@ -113,6 +113,7 @@ export function useIntegrations() {
         setPendingProvider(provider);
         setError(null);
         await syncIntegration(provider, token);
+        await refresh();
         return true;
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : 'Failed to sync integration.');
@@ -121,7 +122,7 @@ export function useIntegrations() {
         setPendingProvider(null);
       }
     },
-    [token]
+    [refresh, token]
   );
 
   const connectedProviders = useMemo(

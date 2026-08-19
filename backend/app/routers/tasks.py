@@ -86,8 +86,8 @@ def create_task(payload: JiraTaskCreateRequest, user: CurrentUser = Depends(get_
     task = JiraTask(key=created["key"], summary=payload.summary, status="To Do", priority=payload.priority, url=created.get("self"), metadata={"issue_type": payload.issue_type}); _save(workspace_id, task)
     return JiraTaskResponse(task=task)
 
-@router.patch("/{issue_key}")
-def update_task(issue_key: str, payload: JiraTaskUpdateRequest, JiraProject, JiraProjectListResponse, user: CurrentUser = Depends(get_current_user)) -> JiraTaskResponse:
+@router.patch("/{issue_key}", response_model=JiraTaskResponse)
+def update_task(issue_key: str, payload: JiraTaskUpdateRequest, user: CurrentUser = Depends(get_current_user)) -> JiraTaskResponse:
     workspace_id = _workspace_id(user); connection_id = _connection(workspace_id); fields: dict[str, Any] = {}
     if payload.summary is not None: fields["summary"] = payload.summary
     if payload.priority is not None: fields["priority"] = {"name": payload.priority}

@@ -118,6 +118,7 @@ export default function IntegrationsPage() {
 
                   <h2 className="mt-4 text-base font-semibold">{meta.name}</h2>
                   <p className="mt-1 text-sm text-slate-600">{meta.description}</p>
+                  {connected && integration?.last_sync_at && <p className="mt-2 text-xs text-slate-500">Last sync: {new Date(integration.last_sync_at).toLocaleString()} · {integration.last_sync_counts?.chunks ?? 0} indexed chunks</p>}
 
                   <div className={connected ? 'mt-5 grid gap-2 sm:grid-cols-2' : 'mt-5'}>
                     <Button

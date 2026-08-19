@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class IntegrationResponse(BaseModel):
@@ -12,6 +12,10 @@ class IntegrationResponse(BaseModel):
     connected_account_email: Optional[str] = None
     connected_at: Optional[datetime] = None
     error_message: Optional[str] = None
+    last_sync_at: Optional[datetime] = None
+    last_index_at: Optional[datetime] = None
+    last_sync_status: Optional[str] = None
+    last_sync_counts: dict = Field(default_factory=dict)
 
 
 class ConnectIntegrationResponse(BaseModel):

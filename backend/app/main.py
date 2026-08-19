@@ -7,7 +7,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, integrations, onboarding, rag, sync, tasks, workspace
+from app.routers import auth, integrations, memory, onboarding, rag, sync, tasks, workspace
 
 app = FastAPI(
     title="Enterprise AI Workspace API",
@@ -34,6 +34,7 @@ app.include_router(integrations.router, prefix="/integrations", tags=["Integrati
 app.include_router(sync.router, prefix="/sync", tags=["Synchronization"])
 app.include_router(rag.router, prefix="/rag", tags=["RAG"])
 app.include_router(tasks.router, prefix="/tasks", tags=["Tasks"])
+app.include_router(memory.router, prefix="/memory", tags=["Workspace memory"])
 
 
 @app.get("/health")

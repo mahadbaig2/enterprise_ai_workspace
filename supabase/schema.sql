@@ -313,6 +313,29 @@ CREATE POLICY "Users can access workspaces they belong to" ON public.workspaces 
     id IN (SELECT workspace_id FROM public.workspace_members WHERE user_id = auth.uid()) OR owner_id = auth.uid()
 );
 
+-- Conversations and messages are private to the authenticated user and their
+-- owned workspace. Keep these policies in the base schema as well as phase10
+-- so fresh installations do not enable RLS without allowing inserts.
+CREATE POLICY "Users can access own workspace conversations" ON public.conversations
+FOR ALL
+USING (
+    user_id = (SELECT auth.uid())
+    AND workspace_id IN (SELECT id FROM public.workspaces WHERE owner_id = (SELECT auth.uid()))
+)
+WITH CHECK (
+    user_id = (SELECT auth.uid())
+    AND workspace_id IN (SELECT id FROM public.workspaces WHERE owner_id = (SELECT auth.uid()))
+);
+
+CREATE POLICY "Users can access messages in own conversations" ON public.messages
+FOR ALL
+USING (
+    conversation_id IN (SELECT id FROM public.conversations WHERE user_id = (SELECT auth.uid()))
+)
+WITH CHECK (
+    conversation_id IN (SELECT id FROM public.conversations WHERE user_id = (SELECT auth.uid()))
+);
+
 DO $$
 BEGIN
     IF NOT EXISTS (

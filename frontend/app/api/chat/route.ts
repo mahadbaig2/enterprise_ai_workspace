@@ -12,7 +12,7 @@ async function token(req: Request) {
   return data.session?.access_token ? 'Bearer ' + data.session.access_token : undefined;
 }
 
-function sse(data: { conversationId?: string; routing: unknown; content: string; citations: unknown[]; tasks: unknown[] }) {
+function sse(data: { conversationId?: string; routing: unknown; content: string; citations: unknown[]; tasks: unknown[]; retrievalStatus?: string }) {
   const encoder = new TextEncoder();
   const SEP = '\n\n';
   const chunks = data.content.match(/.{1,80}(?:\s|$)|.{1,80}/g) || [data.content];
@@ -36,13 +36,13 @@ function sse(data: { conversationId?: string; routing: unknown; content: string;
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json() as { prompt?: string; workspaceId?: string; stream?: boolean };
+    const body = await req.json() as { prompt?: string; workspaceId?: string; stream?: boolean; context?: string; confirmation?: { approved?: boolean; proposal?: Parameters<typeof processTaskQuery>[4] } };
     if (!body.prompt || typeof body.prompt !== 'string') {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
     }
     const routing = await classifyIntent(body.prompt);
     const auth = routing.targetAgent === 'general' ? undefined : await token(req);
-    const result: { routing: typeof routing; content: string; citations: unknown[]; tasks: unknown[] } = {
+  const result: { routing: typeof routing; content: string; citations: unknown[]; tasks: unknown[]; retrievalStatus?: string } = {
       routing,
       content: '',
       citations: [],
@@ -52,16 +52,20 @@ export async function POST(req: Request) {
       const task = await processTaskQuery(
         body.prompt,
         routing.intent as Extract<AgentIntent, 'TASK_QUERY' | 'TASK_UPDATE' | 'TASK_CREATE'>,
-        auth
+        auth,
+        body.confirmation?.approved === true,
+        body.confirmation?.proposal
       );
       result.content = task.answer;
       result.tasks = task.tasks || (task.updatedTask ? [task.updatedTask] : []);
+      if (task.requiresConfirmation) result.tasks = [{ ...task.proposal, requiresConfirmation: true }];
     } else if (routing.targetAgent === 'general') {
       result.content = 'Hello! How can I help with your connected workspace?';
     } else {
-      const knowledge = await processKnowledgeQuery(body.prompt, body.workspaceId, auth);
+      const knowledge = await processKnowledgeQuery(body.prompt, body.workspaceId, auth, body.context);
       result.content = knowledge.answer;
       result.citations = knowledge.citations;
+      result.retrievalStatus = knowledge.retrievalStatus;
     }
     return body.stream ? sse(result) : NextResponse.json(result);
   } catch (error) {

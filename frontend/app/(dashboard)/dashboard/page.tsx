@@ -8,7 +8,8 @@ import { FileText, Loader2, LogOut, Menu, MessageSquarePlus, Plug, Send, Sparkle
 
 type Conversation = { id: string; title: string; updated_at: string };
 type Citation = { id: string; title: string; source: string; url?: string; snippet: string };
-type Message = { id: string; sender: 'user' | 'agent'; content: string; citations?: Citation[] };
+type JiraProposal = { action: 'CREATE' | 'UPDATE'; issueKey?: string; summary?: string; projectKey?: string; status?: string };
+type Message = { id: string; sender: 'user' | 'agent'; content: string; citations?: Citation[]; tasks?: unknown[]; retrievalStatus?: string };
 type Result = { routing: { targetAgent: string }; content: string; citations: Citation[]; tasks: unknown[] };
 
 function MarkdownText({ content }: { content: string }) {
@@ -82,7 +83,8 @@ export default function DashboardPage() {
     setBusy(true);
     setMessages((current) => [...current, { id: 'user-' + Date.now(), sender: 'user', content: text }]);
     try {
-      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: text, workspaceId: workspace?.id, stream: true }) });
+      const context = messages.slice(-8).map((item) => `${item.sender}: ${item.content}`).join('\n');
+      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: text, workspaceId: workspace?.id, context, stream: true }) });
       if (!response.ok || !response.body) throw new Error('Chat request failed');
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -108,7 +110,7 @@ export default function DashboardPage() {
         }
       }
       const finalResult = { routing: result.routing || { targetAgent: 'knowledge' }, content: answer, citations: result.citations || [], tasks: result.tasks || [] };
-      setMessages((current) => [...current.filter((item) => item.id !== 'streaming'), { id: 'agent-' + Date.now(), sender: 'agent', content: answer, citations: finalResult.citations }]);
+      setMessages((current) => [...current.filter((item) => item.id !== 'streaming'), { id: 'agent-' + Date.now(), sender: 'agent', content: answer, citations: finalResult.citations, tasks: finalResult.tasks }]);
       if (id) await fetch('/api/conversations/' + id + '/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: text, ...finalResult }) });
       await loadConversations();
     } catch (error) {
@@ -116,6 +118,19 @@ export default function DashboardPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function confirmJiraAction(message: Message, proposal: JiraProposal, approved: boolean) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: proposal.action === 'CREATE' ? `Create Jira task ${proposal.summary || ''} in ${proposal.projectKey || ''}` : `Update ${proposal.issueKey || ''} to ${proposal.status || ''}`, workspaceId: workspace?.id, confirmation: { approved, proposal } }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Jira confirmation failed');
+      setMessages((current) => current.map((item) => item.id === message.id ? { ...item, content: approved ? body.content : 'Jira action cancelled. No changes were made.', tasks: [] } : item));
+    } catch (error) {
+      setMessages((current) => [...current, { id: 'error-' + Date.now(), sender: 'agent', content: error instanceof Error ? error.message : 'Unable to complete Jira action.' }]);
+    } finally { setBusy(false); }
   }
 
   useEffect(() => { if (!authLoading) void loadConversations(); }, [authLoading]);
@@ -133,7 +148,7 @@ export default function DashboardPage() {
     <main className="flex min-w-0 flex-1 flex-col">
       <header className="flex h-16 items-center justify-between border-b border-slate-800 px-4 md:px-8"><div className="flex items-center gap-3"><button aria-label="Open menu" title="Open menu" className="text-slate-400 md:hidden" onClick={() => setMenuOpen(true)}><Menu className="h-5 w-5" /></button><div><p className="text-[10px] uppercase tracking-wider text-red-300">Enterprise AI Workspace</p><h1 className="text-lg font-semibold text-white">{conversationId ? 'Conversation' : 'New conversation'}</h1></div></div><Link href="/integrations" className="hidden items-center gap-2 text-xs text-slate-400 hover:text-white sm:flex"><Plug className="h-4 w-4" />Manage integrations</Link></header>
       <div ref={scrollRef} className="flex-1 overflow-y-auto"><div className="mx-auto max-w-4xl px-4 py-8 md:px-8">{(workspaceError || !workspace) && <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">Workspace is unavailable. Basic questions still work; connect or finish setting up a workspace to use connected tools.</div>}
-        {!messages.length ? <div className="flex min-h-[55vh] flex-col items-center justify-center text-center"><div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-red-500/30 bg-red-500/10 text-red-300"><Sparkles className="h-7 w-7" /></div><h2 className="text-2xl font-semibold text-white">Ask your workspace</h2><p className="mt-2 max-w-md text-sm leading-6 text-slate-500">Search connected knowledge, review Jira work, or ask a general question.</p><div className="mt-6 grid w-full max-w-2xl gap-2 sm:grid-cols-3">{['What is in our connected knowledge base?', 'Show my assigned Jira tasks', 'What can you help me with?'].map((item) => <button key={item} onClick={() => setPrompt(item)} className="rounded-lg border border-slate-800 bg-slate-900 p-3 text-left text-xs text-slate-400 hover:border-red-500/50 hover:text-slate-200">{item}</button>)}</div></div> : messages.map((message) => <article key={message.id} className={message.sender === 'user' ? 'mb-6 flex justify-end' : 'mb-8'}><div className={message.sender === 'user' ? 'max-w-[85%] rounded-2xl rounded-br-sm bg-red-600 px-4 py-3 text-sm text-white' : 'max-w-[90%]'}>{message.sender === 'user' ? <p className="whitespace-pre-wrap">{message.content}</p> : <><div className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-wider text-red-300"><Sparkles className="h-3 w-3" />Workspace Agent</div><MarkdownText content={message.content} /><Citations items={message.citations || []} /></>}</div></article>)}
+        {!messages.length ? <div className="flex min-h-[55vh] flex-col items-center justify-center text-center"><div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-red-500/30 bg-red-500/10 text-red-300"><Sparkles className="h-7 w-7" /></div><h2 className="text-2xl font-semibold text-white">Ask your workspace</h2><p className="mt-2 max-w-md text-sm leading-6 text-slate-500">Search connected knowledge, review Jira work, or ask a general question.</p><div className="mt-6 grid w-full max-w-2xl gap-2 sm:grid-cols-3">{['What is in our connected knowledge base?', 'Show my assigned Jira tasks', 'What can you help me with?'].map((item) => <button key={item} onClick={() => setPrompt(item)} className="rounded-lg border border-slate-800 bg-slate-900 p-3 text-left text-xs text-slate-400 hover:border-red-500/50 hover:text-slate-200">{item}</button>)}</div></div> : messages.map((message) => <article key={message.id} className={message.sender === 'user' ? 'mb-6 flex justify-end' : 'mb-8'}><div className={message.sender === 'user' ? 'max-w-[85%] rounded-2xl rounded-br-sm bg-red-600 px-4 py-3 text-sm text-white' : 'max-w-[90%]'}>{message.sender === 'user' ? <p className="whitespace-pre-wrap">{message.content}</p> : <><div className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-wider text-red-300"><Sparkles className="h-3 w-3" />Workspace Agent</div><MarkdownText content={message.content} /><Citations items={message.citations || []} />{(message.tasks || []).map((task, index) => { const item = task as JiraProposal & { requiresConfirmation?: boolean }; return item.requiresConfirmation ? <div key={index} className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100"><p className="font-semibold">Confirm Jira {item.action === 'CREATE' ? 'creation' : 'update'}</p><p className="mt-1">{item.action === 'CREATE' ? `${item.summary} in ${item.projectKey}` : `${item.issueKey} → ${item.status}`}</p><div className="mt-3 flex gap-2"><button onClick={() => void confirmJiraAction(message, item, true)} className="rounded bg-emerald-600 px-3 py-1.5 font-semibold text-white">Confirm</button><button onClick={() => void confirmJiraAction(message, item, false)} className="rounded border border-slate-600 px-3 py-1.5">Cancel</button></div></div> : null; })}</>}</div></article>)}
         {busy && <div className="flex items-center gap-2 text-xs text-slate-500"><Loader2 className="h-3.5 w-3.5 animate-spin" />Working across connected tools</div>}
       </div></div>
       <form onSubmit={(event) => void sendMessage(event)} className="border-t border-slate-800 bg-slate-950 p-4 md:px-8"><div className="mx-auto flex max-w-4xl items-end gap-3 rounded-xl border border-slate-700 bg-slate-900 p-2 focus-within:border-red-500/70"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder="Ask about your workspace..." rows={1} className="max-h-32 min-h-10 flex-1 resize-none cursor-text bg-transparent px-2 py-2 text-sm text-white outline-none placeholder:text-slate-600" /><button aria-label="Send message" title="Send message" disabled={busy || !prompt.trim()} className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-600 text-white hover:bg-red-500 disabled:opacity-40"><Send className="h-4 w-4" /></button></div></form>

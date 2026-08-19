@@ -2,6 +2,7 @@ import hashlib
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -90,6 +91,7 @@ def index_workspace_documents(workspace_id: str, source: str | None = None) -> R
     embeddings_stored = 0
     for document in documents:
         chunks = _chunk_text(document.get("content", ""))
+        db.table("documents").update({"index_status": "pending", "index_error": None}).eq("id", document["id"]).execute()
         db.table("document_chunks").delete().eq("document_id", document["id"]).execute()
         embeddings = _generate_embeddings(chunks)
         rows = []
@@ -113,6 +115,7 @@ def index_workspace_documents(workspace_id: str, source: str | None = None) -> R
             result = db.table("document_chunks").upsert(rows, on_conflict="document_id,chunk_index").execute()
             chunks_stored += len(result.data or rows)
             embeddings_stored += sum(1 for embedding in embeddings if embedding is not None)
+        db.table("documents").update({"index_status": "indexed", "indexed_at": datetime.now(timezone.utc).isoformat(), "index_error": None}).eq("id", document["id"]).execute()
     return RagIndexResponse(
         workspace_id=workspace_id,
         documents_indexed=len(documents),

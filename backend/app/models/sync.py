@@ -9,6 +9,8 @@ class SyncProviderResult(BaseModel):
     status: str
     retrieved_count: int
     stored_count: int
+    indexed_count: int = 0
+    error_message: Optional[str] = None
     message: str
 
 
