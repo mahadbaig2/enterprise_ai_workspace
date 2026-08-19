@@ -45,12 +45,16 @@ export async function processKnowledgeQuery(
         body: JSON.stringify({ query: userQuery, match_count: 8 }),
         cache: 'no-store',
       });
-      if (!response.ok) {
+      if (response.ok) {
+        const rag = (await response.json()) as { results?: KnowledgeDocument[] };
+        documents = rag.results || [];
+      } else {
         throw new Error('RAG search failed with status ' + response.status);
       }
-      const rag = (await response.json()) as { results?: KnowledgeDocument[] };
-      documents = rag.results || [];
-    } else {
+    }
+
+    // Keep chat useful when the backend RAG service is temporarily unavailable.
+    if (documents.length === 0) {
       const supabase = await createClient();
       const { data, error } = await supabase.rpc('match_document_chunks', {
         query_text: userQuery,

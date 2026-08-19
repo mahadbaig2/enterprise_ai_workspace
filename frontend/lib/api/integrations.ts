@@ -118,3 +118,21 @@ export async function disconnectIntegration(
 
   if (!res.ok) throw new Error(await readError(res));
 }
+
+export async function syncIntegration(
+  provider: string,
+  token: string
+): Promise<unknown> {
+  const res = await fetch('/api/sync', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ provider }),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}

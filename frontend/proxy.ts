@@ -39,11 +39,12 @@ export default async function proxy(request: NextRequest) {
   const isAuthPage = pathname.startsWith('/login') || pathname.startsWith('/signup');
   const isAuthCallback = pathname.startsWith('/auth/callback');
   const isLandingPage = pathname === '/';
+  const isApiRoute = pathname.startsWith('/api/');
   const isWorkspaceNew = pathname.startsWith('/workspace/new');
   const isOnboarding = pathname.startsWith('/onboarding');
 
   // 1. Unauthenticated → /login (except public routes)
-  if (!user && !isAuthPage && !isAuthCallback && !isLandingPage) {
+  if (!user && !isAuthPage && !isAuthCallback && !isLandingPage && !isApiRoute) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     return NextResponse.redirect(url);
@@ -61,7 +62,7 @@ export default async function proxy(request: NextRequest) {
     try {
       const workspaceRes = await fetch(`${BACKEND_URL}/workspace`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
-        signal: AbortSignal.timeout(3000), // 3 s timeout to stay lightweight
+        signal: AbortSignal.timeout(1200), // 3 s timeout to stay lightweight
       });
 
       if (workspaceRes.status === 404) {
@@ -74,7 +75,7 @@ export default async function proxy(request: NextRequest) {
       if (workspaceRes.ok) {
         const onboardingRes = await fetch(`${BACKEND_URL}/onboarding`, {
           headers: { Authorization: `Bearer ${session.access_token}` },
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(1200),
         });
 
         if (onboardingRes.ok) {
@@ -104,7 +105,7 @@ export default async function proxy(request: NextRequest) {
     try {
       const workspaceRes = await fetch(`${BACKEND_URL}/workspace`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(1200),
       });
 
       if (workspaceRes.ok) {

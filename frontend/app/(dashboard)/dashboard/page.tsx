@@ -29,7 +29,7 @@ function Citations({ items }: { items: Citation[] }) {
 
 export default function DashboardPage() {
   const { user, loading: authLoading, signOut } = useAuth();
-  const { workspace, loading: workspaceLoading } = useWorkspace();
+  const { workspace, loading: workspaceLoading, error: workspaceError } = useWorkspace();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationId, setConversationId] = useState<string>();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -76,13 +76,13 @@ export default function DashboardPage() {
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();
     const text = prompt.trim();
-    if (!text || busy || !workspace?.id) return;
+    if (!text || busy) return;
     const id = await ensureConversation(text);
     setPrompt('');
     setBusy(true);
     setMessages((current) => [...current, { id: 'user-' + Date.now(), sender: 'user', content: text }]);
     try {
-      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: text, workspaceId: workspace.id, stream: true }) });
+      const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: text, workspaceId: workspace?.id, stream: true }) });
       if (!response.ok || !response.body) throw new Error('Chat request failed');
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -132,11 +132,11 @@ export default function DashboardPage() {
     </aside>
     <main className="flex min-w-0 flex-1 flex-col">
       <header className="flex h-16 items-center justify-between border-b border-slate-800 px-4 md:px-8"><div className="flex items-center gap-3"><button aria-label="Open menu" title="Open menu" className="text-slate-400 md:hidden" onClick={() => setMenuOpen(true)}><Menu className="h-5 w-5" /></button><div><p className="text-[10px] uppercase tracking-wider text-red-300">Enterprise AI Workspace</p><h1 className="text-lg font-semibold text-white">{conversationId ? 'Conversation' : 'New conversation'}</h1></div></div><Link href="/integrations" className="hidden items-center gap-2 text-xs text-slate-400 hover:text-white sm:flex"><Plug className="h-4 w-4" />Manage integrations</Link></header>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto"><div className="mx-auto max-w-4xl px-4 py-8 md:px-8">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto"><div className="mx-auto max-w-4xl px-4 py-8 md:px-8">{(workspaceError || !workspace) && <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">Workspace is unavailable. Basic questions still work; connect or finish setting up a workspace to use connected tools.</div>}
         {!messages.length ? <div className="flex min-h-[55vh] flex-col items-center justify-center text-center"><div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-red-500/30 bg-red-500/10 text-red-300"><Sparkles className="h-7 w-7" /></div><h2 className="text-2xl font-semibold text-white">Ask your workspace</h2><p className="mt-2 max-w-md text-sm leading-6 text-slate-500">Search connected knowledge, review Jira work, or ask a general question.</p><div className="mt-6 grid w-full max-w-2xl gap-2 sm:grid-cols-3">{['What is in our connected knowledge base?', 'Show my assigned Jira tasks', 'What can you help me with?'].map((item) => <button key={item} onClick={() => setPrompt(item)} className="rounded-lg border border-slate-800 bg-slate-900 p-3 text-left text-xs text-slate-400 hover:border-red-500/50 hover:text-slate-200">{item}</button>)}</div></div> : messages.map((message) => <article key={message.id} className={message.sender === 'user' ? 'mb-6 flex justify-end' : 'mb-8'}><div className={message.sender === 'user' ? 'max-w-[85%] rounded-2xl rounded-br-sm bg-red-600 px-4 py-3 text-sm text-white' : 'max-w-[90%]'}>{message.sender === 'user' ? <p className="whitespace-pre-wrap">{message.content}</p> : <><div className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-wider text-red-300"><Sparkles className="h-3 w-3" />Workspace Agent</div><MarkdownText content={message.content} /><Citations items={message.citations || []} /></>}</div></article>)}
         {busy && <div className="flex items-center gap-2 text-xs text-slate-500"><Loader2 className="h-3.5 w-3.5 animate-spin" />Working across connected tools</div>}
       </div></div>
-      <form onSubmit={(event) => void sendMessage(event)} className="border-t border-slate-800 bg-slate-950 p-4 md:px-8"><div className="mx-auto flex max-w-4xl items-end gap-3 rounded-xl border border-slate-700 bg-slate-900 p-2 focus-within:border-red-500/70"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder="Ask about your workspace..." rows={1} className="max-h-32 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-white outline-none placeholder:text-slate-600" /><button aria-label="Send message" title="Send message" disabled={busy || !prompt.trim()} className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-600 text-white hover:bg-red-500 disabled:opacity-40"><Send className="h-4 w-4" /></button></div></form>
+      <form onSubmit={(event) => void sendMessage(event)} className="border-t border-slate-800 bg-slate-950 p-4 md:px-8"><div className="mx-auto flex max-w-4xl items-end gap-3 rounded-xl border border-slate-700 bg-slate-900 p-2 focus-within:border-red-500/70"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder="Ask about your workspace..." rows={1} className="max-h-32 min-h-10 flex-1 resize-none cursor-text bg-transparent px-2 py-2 text-sm text-white outline-none placeholder:text-slate-600" /><button aria-label="Send message" title="Send message" disabled={busy || !prompt.trim()} className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-600 text-white hover:bg-red-500 disabled:opacity-40"><Send className="h-4 w-4" /></button></div></form>
     </main>
   </div>;
 }

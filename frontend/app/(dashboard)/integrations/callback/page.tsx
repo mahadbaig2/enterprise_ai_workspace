@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/use-auth';
-import { verifyIntegrationCallback } from '@/lib/api/integrations';
+import { syncIntegration, verifyIntegrationCallback } from '@/lib/api/integrations';
 import { getIntegrationMeta } from '@/lib/integrations';
 
 type CallbackState = 'verifying' | 'success' | 'error';
@@ -45,6 +45,15 @@ function CallbackContent() {
         await verifyIntegrationCallback(provider, connectionId, session.access_token);
         if (cancelled) return;
         setState('success');
+        setMessage(`${providerName} connected. Syncing your workspace...`);
+        if (provider !== 'jira') {
+          try {
+            await syncIntegration(provider, session.access_token);
+          } catch (syncError) {
+            console.warn('Initial integration sync failed:', syncError);
+          }
+        }
+        if (cancelled) return;
         setMessage(`${providerName} connected successfully!`);
         window.setTimeout(() => router.push('/integrations'), 2000);
       } catch {

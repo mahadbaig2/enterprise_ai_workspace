@@ -32,9 +32,7 @@ export const integrationCards = [
 
 export type IntegrationProvider = (typeof integrationCards)[number]['provider'];
 
-export const requiredIntegrationProviders = integrationCards.map(
-  (integration) => integration.provider
-);
+export const requiredIntegrationProviders: IntegrationProvider[] = [];
 
 export function getIntegrationMeta(provider: string) {
   return integrationCards.find((integration) => integration.provider === provider);

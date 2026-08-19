@@ -28,7 +28,7 @@ export function ConnectToolsStep({
           Connect {integration.name}
         </h1>
         <p className="mx-auto mt-3 max-w-xl text-base leading-7 text-slate-600">
-          This integration is required before your AI workspace dashboard is unlocked.
+          Connect to {integration.name} to let the AI search your data, or skip and connect later.
         </p>
       </div>
 
@@ -98,10 +98,13 @@ export function ConnectToolsStep({
         </div>
       </div>
 
-      <div className="mt-8 flex justify-center">
-        <Button onClick={onNext} disabled={!connected} className="min-w-32">
-          Continue
+      <div className="mt-8 flex flex-col items-center gap-2">
+        <Button onClick={onNext} className="min-w-32">
+          {connected ? 'Continue' : 'Skip for Now'}
         </Button>
+        {!connected && (
+          <p className="text-xs text-slate-500">You can connect this later from the integrations page.</p>
+        )}
       </div>
     </section>
   );
