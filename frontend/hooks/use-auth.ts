@@ -8,9 +8,9 @@ export function useAuth() {
   const router = useRouter();
   const { user, session, loading } = useSession();
 
-  const signOut = async () => {
+  const signOut = async (scope: 'global' | 'local' | 'others' = 'local') => {
     const supabase = createClient();
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope });
     router.push('/login');
     router.refresh();
   };
