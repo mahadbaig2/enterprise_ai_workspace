@@ -37,6 +37,8 @@ yarn-error.log*
 .env.local
 .env.example
 
+/mvp-rag-rescue-patch/*
+
 # vercel
 .vercel
 

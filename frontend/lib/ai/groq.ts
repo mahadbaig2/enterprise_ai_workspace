@@ -1,6 +1,6 @@
 import Groq from 'groq-sdk';
 
-const apiKey = process.env.GROQ_API_KEY || '';
+const apiKey = process.env.GROQ_API_KEY?.trim() || '';
 
 export const groq = new Groq({
   apiKey: apiKey || 'dummy_key_for_initialization',
@@ -10,8 +10,7 @@ export const DEFAULT_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile'
 
 export async function generateGroqCompletion(systemPrompt: string, userPrompt: string) {
   if (!apiKey || apiKey === 'gsk_your_groq_api_key_here') {
-    console.warn('GROQ_API_KEY is not configured. Returning fallback structured response.');
-    return null;
+    throw new Error('GROQ_API_KEY is not configured on the Next.js server.');
   }
 
   try {
@@ -25,9 +24,11 @@ export async function generateGroqCompletion(systemPrompt: string, userPrompt: s
       max_completion_tokens: 1024,
     });
 
-    return response.choices[0]?.message?.content || '';
+    const content = response.choices[0]?.message?.content?.trim();
+    if (!content) throw new Error('Groq returned an empty completion.');
+    return content;
   } catch (error) {
     console.error('Groq API Error:', error);
-    return null;
+    throw error instanceof Error ? error : new Error('Groq completion failed.');
   }
 }

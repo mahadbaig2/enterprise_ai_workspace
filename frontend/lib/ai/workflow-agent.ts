@@ -17,14 +17,16 @@ export async function classifyIntent(prompt: string): Promise<WorkflowRoutingRes
   const quick = heuristic(prompt);
   if (quick) return quick;
   const systemPrompt = 'Classify this Enterprise AI Workspace request. Return ONLY JSON with intent (KNOWLEDGE_QUERY, TASK_QUERY, TASK_UPDATE, TASK_CREATE, GENERAL), reasoning, and targetAgent (knowledge, task, general). Use KNOWLEDGE_QUERY for connected company documents, TASK_QUERY for assigned Jira issues, TASK_UPDATE for changing Jira issues, TASK_CREATE for new Jira issues, and GENERAL for greetings or unrelated conversation.';
-  const completion = await generateGroqCompletion(systemPrompt, prompt);
-  if (completion) {
+  try {
+    const completion = await generateGroqCompletion(systemPrompt, prompt);
     try {
       const parsed = JSON.parse(completion.replace(/\`\`\`json/g, '').replace(/\`\`\`/g, '').trim());
       const allowed: AgentIntent[] = ['KNOWLEDGE_QUERY', 'TASK_QUERY', 'TASK_UPDATE', 'TASK_CREATE', 'GENERAL'];
       const intent = allowed.includes(parsed.intent) ? parsed.intent : 'KNOWLEDGE_QUERY';
       return { intent, targetAgent: intent === 'GENERAL' ? 'general' : intent.startsWith('TASK_') ? 'task' : 'knowledge', reasoning: parsed.reasoning || 'Classified from the request.' };
     } catch { console.warn('Workflow Agent returned invalid JSON; using knowledge routing.'); }
+  } catch (error) {
+    console.warn('Workflow Agent unavailable; using deterministic knowledge routing.', error);
   }
   return { intent: 'KNOWLEDGE_QUERY', targetAgent: 'knowledge', reasoning: 'Defaulted to connected workspace knowledge.' };
 }

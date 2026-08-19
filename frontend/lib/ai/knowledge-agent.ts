@@ -26,6 +26,32 @@ type KnowledgeDocument = {
   chunk_index?: number;
 };
 
+const MAX_CONTEXT_CHARACTERS = 18_000;
+
+function usableDocuments(documents: KnowledgeDocument[]): KnowledgeDocument[] {
+  const seen = new Set<string>();
+  return documents.filter((doc) => {
+    const content = doc.content?.trim();
+    if (!content) return false;
+    const key = `${doc.document_id || doc.id || doc.title}:${doc.chunk_index ?? content.slice(0, 80)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildExtractiveFallback(documents: KnowledgeDocument[]): string {
+  const passages = documents.slice(0, 3).map((doc, index) => {
+    const content = doc.content.trim();
+    const excerpt = content.replace(/\s+/g, ' ').slice(0, 700);
+    return `${index + 1}. **${doc.title || 'Untitled document'}:** ${excerpt}${content.length > 700 ? '...' : ''} [Source ${index + 1}]`;
+  });
+
+  return passages.length
+    ? `I found relevant information in the connected workspace, but the AI answer generator is temporarily unavailable. Here are the most relevant passages:\n\n${passages.join('\n\n')}`
+    : 'I could not find this information in the connected workspace documents.';
+}
+
 function normalizeSource(source: string): Citation['source'] {
   if (source === 'google_drive' || source === 'notion' || source === 'jira') return source;
   return 'other';
@@ -51,14 +77,20 @@ export async function processKnowledgeQuery(
       });
       if (response.ok) {
         const rag = (await response.json()) as { results?: KnowledgeDocument[] };
-        documents = rag.results || [];
+        documents = usableDocuments(rag.results || []);
       } else {
         throw new Error('RAG search failed with status ' + response.status);
       }
     }
 
-    // Keep chat useful when the backend RAG service is temporarily unavailable.
-    if (documents.length === 0) {
+  } catch (err) {
+    retrievalError = err instanceof Error ? err.message : 'The connected knowledge search failed.';
+    console.warn('Backend RAG retrieval failed; trying direct Supabase retrieval:', err);
+  }
+
+  // Keep chat useful when the backend RAG service is temporarily unavailable.
+  if (documents.length === 0 && workspaceId) {
+    try {
       const supabase = await createClient();
       const { data, error } = await supabase.rpc('match_document_chunks', {
         query_text: userQuery,
@@ -69,14 +101,18 @@ export async function processKnowledgeQuery(
         filter_sources: null,
         filter_metadata: null,
       });
-      if (!error && data && data.length > 0) {
-        documents = data as KnowledgeDocument[];
+      if (error) throw error;
+      if (data && data.length > 0) {
+        documents = usableDocuments(data as KnowledgeDocument[]);
       }
+    } catch (err) {
+      const fallbackError = err instanceof Error ? err.message : 'Direct workspace search failed.';
+      retrievalError = retrievalError ? `${retrievalError}; ${fallbackError}` : fallbackError;
+      console.warn('Direct Supabase RAG retrieval failed:', err);
     }
-  } catch (err) {
-    retrievalError = err instanceof Error ? err.message : 'The connected knowledge search failed.';
-    console.warn('RAG retrieval failed:', err);
   }
+
+  documents = usableDocuments(documents);
 
   const citations: Citation[] = documents.map((doc, idx) => ({
     id: doc.id || 'chunk-' + (idx + 1),
@@ -88,13 +124,15 @@ export async function processKnowledgeQuery(
 
   const contextText = documents.length > 0
     ? documents
-      .map((doc, idx) => '[Source ' + (idx + 1) + ': ' + doc.title + ' (' + doc.source + ')]\n' + doc.content)
+      .map((doc, idx) => '[Source ' + (idx + 1) + ': ' + doc.title + ' (' + doc.source + ')]\nURL: ' + (doc.url || 'Unavailable') + '\n' + doc.content)
       .join('\n\n')
+      .slice(0, MAX_CONTEXT_CHARACTERS)
     : 'No matching connected workspace documents were found.';
 
   const systemPrompt = 'You are the Knowledge Agent of Enterprise AI Workspace.\n' +
-    'Answer the employee question strictly grounded in the provided document context.\n' +
-    'Always cite sources inline using [Title] or [Source X] when context supports an answer.\n' +
+    'Answer the employee question directly and strictly from the provided document context.\n' +
+    'Synthesize the answer from the source text. Never respond with only document links, document titles, or instructions to read the sources.\n' +
+    'Cite factual claims inline using [Source X]. Use only the source numbers shown in the context.\n' +
     'If context does not contain the answer, state that information was not found in connected workspace documents.\n' +
     'Keep the response professional, concise, and structured in markdown.\n\n' +
     'DOCUMENT CONTEXT:\n' + contextText;
@@ -107,15 +145,11 @@ export async function processKnowledgeQuery(
     llmError = err instanceof Error ? err.message : 'The language model failed.';
   }
   const answer = llmResponse || (llmError
-    ? 'I retrieved workspace evidence, but the answer generator failed. Please try again.'
-    : documents.length > 0
-    ? 'I found ' + documents.length + ' relevant workspace document' +
-      (documents.length === 1 ? '' : 's') +
-      '. Review the citations below for the grounded source text.'
+    ? buildExtractiveFallback(documents)
     : 'I could not find this information in the connected workspace documents.');
 
   return {
-    answer: llmError && documents.length ? 'I retrieved supporting workspace evidence, but the answer generator failed. Review the citations below.' : answer,
+    answer,
     citations,
     retrievalStatus: llmError ? 'llm_failure' : retrievalError && !documents.length ? 'retrieval_failure' : documents.length ? 'ok' : 'no_evidence',
     error: llmError || retrievalError,
