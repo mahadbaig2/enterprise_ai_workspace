@@ -29,9 +29,16 @@ export default async function proxy(request: NextRequest) {
     }
   );
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  let session = null;
+  try {
+    const result = await Promise.race([
+      supabase.auth.getSession(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Auth session lookup timed out')), 5000)),
+    ]);
+    session = result.data.session;
+  } catch {
+    session = null;
+  }
 
   const user = session?.user ?? null;
   const pathname = request.nextUrl.pathname;

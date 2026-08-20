@@ -1,281 +1,195 @@
+from __future__ import annotations
+
 import os
+import re
+import uuid
+import logging
+from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-import httpx
 from fastapi import HTTPException, status
-
-os.environ.setdefault("COMPOSIO_CACHE_DIR", r"C:\tmp\composio-cache")
 
 try:
     from composio import Composio
-except Exception:  # pragma: no cover - depends on optional SDK installation
+except ImportError:  # pragma: no cover - exercised by configuration tests
     Composio = None
 
-try:
-    from composio import App
-except Exception:  # pragma: no cover - App exists in older SDKs
-    App = None
 
-try:
-    from composio import ComposioToolSet
-except Exception:  # pragma: no cover - ComposioToolSet exists in older SDKs
-    ComposioToolSet = None
+JIRA_APP = "JIRA"
+_SAFE_TEXT = re.compile(r"[^\w .:/-]+")
+_SENSITIVE_TEXT = re.compile(r"(?i)(bearer\s+|api[_-]?key[=: ]+|access[_-]?token[=: ]+|secret[=: ]+|ak_[A-Za-z0-9_-]+|gsk_[A-Za-z0-9_-]+)[^\s,;]+")
+logger = logging.getLogger(__name__)
 
 
-class ComposioClientProxy:
+@dataclass(frozen=True)
+class ProxyResponse:
+    status_code: int
+    data: Any = None
+    headers: dict[str, str] = field(default_factory=dict)
+
+
+class ComposioClient:
+    """Small adapter for the Composio 0.20.x API used by this service."""
+
     def __init__(self) -> None:
         self._client: Any | None = None
 
-    @property
-    def client(self) -> Any:
+    def get_client(self) -> Any:
         if self._client is None:
-            client_cls = Composio or ComposioToolSet
-            if client_cls is None:
-                self._raise_sdk_unavailable()
-
-            api_key = self._api_key()
-            self._client = client_cls(api_key=api_key)
-
+            if Composio is None:
+                raise HTTPException(503, "The Composio SDK is not installed on the backend.")
+            api_key = os.getenv("COMPOSIO_API_KEY", "").strip()
+            if not api_key:
+                raise HTTPException(503, "COMPOSIO_API_KEY is missing from the backend configuration.")
+            self._client = Composio(api_key=api_key)
         return self._client
 
-    def get_app(self, app_name: str) -> Any:
-        if App is not None:
-            return getattr(App, app_name)
-        return app_name
-
-    def initiate_connection(self, *, entity_id: str, app: Any, redirect_url: str) -> Any:
-        app_name = self._app_name(app)
-        auth_config_id = self._get_auth_config_id(app_name)
-
-        link_request = self._link_with_sdk(
-            user_id=entity_id,
-            auth_config_id=auth_config_id,
-            callback_url=redirect_url,
-        )
-        if link_request is not None:
-            return link_request
-
-        if hasattr(self.client, "initiate_connection"):
-            try:
-                return self.client.initiate_connection(
-                    entity_id=entity_id,
-                    app=app,
-                    redirect_url=redirect_url,
-                )
-            except Exception as exc:
-                if not self._is_legacy_oauth_error(exc):
-                    raise
-
-        connected_accounts = self._connected_accounts_api()
-        if connected_accounts is not None and hasattr(connected_accounts, "initiate"):
-            try:
-                return connected_accounts.initiate(
-                    user_id=entity_id,
-                    auth_config_id=auth_config_id,
-                    callback_url=redirect_url,
-                )
-            except Exception as exc:
-                if not self._is_legacy_oauth_error(exc):
-                    raise
-
-        return self._link_with_httpx(
-            user_id=entity_id,
-            auth_config_id=auth_config_id,
-            callback_url=redirect_url,
-        )
-
-    def proxy_request(
-        self,
-        *,
-        endpoint: str,
-        method: str,
-        connected_account_id: str,
-        body: dict[str, Any] | None = None,
-        parameters: list[dict[str, str]] | None = None,
-    ) -> Any:
-        tools = getattr(self.client, "tools", None)
-        if tools is None or not hasattr(tools, "proxy"):
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The installed Composio SDK does not expose tools.proxy.",
-            )
-
+    def diagnostics(self) -> dict[str, Any]:
+        client = None
+        methods = {"client": False, "connected_accounts": False, "tools_proxy": False}
         try:
-            return tools.proxy(
-                endpoint=endpoint,
-                method=method,
-                body=body,
-                connected_account_id=connected_account_id,
-                parameters=parameters,
-            )
+            client = self.get_client()
+            methods = {
+                "client": True,
+                "connected_accounts": hasattr(client, "connected_accounts"),
+                "tools_proxy": callable(getattr(getattr(client, "tools", None), "proxy", None)),
+            }
+        except HTTPException:
+            pass
+        return {
+            "composio_version": _sdk_version(),
+            "methods": methods,
+            "api_key_configured": bool(os.getenv("COMPOSIO_API_KEY", "").strip()),
+            "jira_auth_configured": bool(os.getenv("COMPOSIO_JIRA_AUTH_CONFIG_ID", "").strip()),
+            "frontend_url_configured": bool(os.getenv("FRONTEND_URL", "").strip()),
+        }
+
+    def create_connection_link(self, *, entity_id: str, app_name: str, callback_url: str) -> Any:
+        auth_config_id = _auth_config_id(app_name)
+        if not callback_url.startswith(("http://", "https://")):
+            raise HTTPException(503, "FRONTEND_URL must produce an absolute OAuth callback URL.")
+        accounts = getattr(self.get_client(), "connected_accounts", None)
+        link = getattr(accounts, "link", None)
+        if not callable(link):
+            raise HTTPException(503, "The installed Composio SDK does not expose connected_accounts.link.")
+        try:
+            return link(user_id=entity_id, auth_config_id=auth_config_id, callback_url=callback_url)
         except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Composio proxy request failed: {exc}",
-            ) from exc
+            raise _composio_error("oauth_link", exc) from exc
 
-    def get_connection(self, *, entity_id: str, app: Any, connection_id: str) -> Any:
-        if hasattr(self.client, "get_entity"):
-            entity = self.client.get_entity(entity_id=entity_id)
-            return entity.get_connection(app=app)
-
-        connected_accounts = self._connected_accounts_api()
-        if connected_accounts is None:
-            return None
-
-        if connection_id:
-            return connected_accounts.get(connection_id)
-
-        auth_config_id = self._get_auth_config_id(self._app_name(app))
-        connections = connected_accounts.list(
-            user_ids=[entity_id],
-            auth_config_ids=[auth_config_id],
-            statuses=["ACTIVE"],
-        )
-        items = getattr(connections, "items", None) or getattr(connections, "data", None)
-        return items[0] if items else None
-
-    def revoke_connection(
-        self, *, entity_id: str, app: Any, connection_id: str | None
-    ) -> None:
-        if hasattr(self.client, "get_entity"):
-            entity = self.client.get_entity(entity_id=entity_id)
-            if hasattr(entity, "disable_trigger"):
-                entity.disable_trigger(app=app)
-            return
-
-        connected_accounts = self._connected_accounts_api()
-        if connection_id and connected_accounts is not None:
-            connected_accounts.delete(
-                connection_id,
-                revoke_on_delete=True,
-            )
-
-    def _link_with_sdk(
-        self,
-        *,
-        user_id: str,
-        auth_config_id: str,
-        callback_url: str,
-    ) -> Any | None:
-        connected_accounts = self._connected_accounts_api()
-        if connected_accounts is None or not hasattr(connected_accounts, "link"):
-            return None
-
-        link = connected_accounts.link
+    def get_connection(self, *, entity_id: str, app_name: str, connection_id: str | None = None) -> Any | None:
+        accounts = getattr(self.get_client(), "connected_accounts", None)
+        if accounts is None:
+            raise HTTPException(503, "The installed Composio SDK does not expose connected_accounts.")
         try:
-            return link(
-                user_id=user_id,
-                auth_config_id=auth_config_id,
-                callback_url=callback_url,
-            )
-        except TypeError:
-            try:
-                return link(
-                    user_id=user_id,
-                    auth_config_id=auth_config_id,
-                    callbackUrl=callback_url,
+            connection = accounts.get(connection_id) if connection_id else None
+            if connection is None:
+                response = accounts.list(
+                    user_ids=[entity_id],
+                    auth_config_ids=[_auth_config_id(app_name)],
+                    toolkit_slugs=[app_name.lower()],
+                    statuses=["ACTIVE"],
+                    limit=10,
                 )
-            except TypeError:
-                return link(user_id=user_id, auth_config_id=auth_config_id)
+                items = getattr(response, "items", None) or getattr(response, "data", None) or []
+                connection = items[0] if items else None
+            if connection is not None and str(getattr(connection, "user_id", entity_id)) != entity_id:
+                raise HTTPException(403, "The Composio connection does not belong to this workspace.")
+            return connection
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise _composio_error("connection_lookup", exc) from exc
 
-    def _link_with_httpx(
-        self,
-        *,
-        user_id: str,
-        auth_config_id: str,
-        callback_url: str,
-    ) -> dict[str, Any]:
+    def assert_connection_active(self, *, entity_id: str, app_name: str, connection_id: str | None = None) -> Any:
+        connection = self.get_connection(entity_id=entity_id, app_name=app_name, connection_id=connection_id)
+        if connection is None:
+            raise HTTPException(404, "No Composio connection was found for this workspace.")
+        state = str(getattr(connection, "status", "")).upper()
+        if state != "ACTIVE":
+            reason = _safe_text_value(getattr(connection, "status_reason", None))
+            raise HTTPException(409, {"category": "connection_inactive", "message": "The Jira connection is not active.", "status": state or "UNKNOWN", "reason": reason})
+        return connection
+
+    def proxy_request(self, *, endpoint: str, method: str, connected_account_id: str, body: Any = None, parameters: list[dict[str, str]] | None = None) -> ProxyResponse:
+        proxy = getattr(getattr(self.get_client(), "tools", None), "proxy", None)
+        if not callable(proxy):
+            raise HTTPException(503, {"category": "sdk_api_missing", "message": "The installed Composio SDK does not expose tools.proxy.", "version": _sdk_version()})
+        correlation_id = uuid.uuid4().hex
         try:
-            response = httpx.post(
-                "https://backend.composio.dev/api/v3/connected_accounts/link",
-                headers={
-                    "x-api-key": self._api_key(),
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "auth_config_id": auth_config_id,
-                    "user_id": user_id,
-                    "callback_url": callback_url,
-                },
-                timeout=20,
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as exc:
-            detail = exc.response.text
-            try:
-                payload = exc.response.json()
-                detail = payload.get("error", {}).get("message", detail)
-            except ValueError:
-                pass
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Composio link request failed: {detail}",
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Composio link request failed: {exc}",
-            ) from exc
+            response = proxy(endpoint=endpoint, method=method.upper(), body=body, connected_account_id=connected_account_id, parameters=parameters)
+        except Exception as exc:
+            logger.warning("Composio proxy request failed", extra={"category": "proxy_request", "endpoint": _safe_endpoint(endpoint), "method": method.upper(), "correlation_id": correlation_id, "error_type": type(exc).__name__})
+            raise _composio_error("proxy_request", exc, correlation_id=correlation_id, endpoint=endpoint, method=method) from exc
+        if isinstance(response, dict):
+            status_code = int(response.get("status", response.get("status_code", 0)) or 0)
+            data = response.get("data", response.get("body", response))
+            headers = dict(response.get("headers") or {})
+        else:
+            status_code = int(getattr(response, "status", getattr(response, "status_code", 0)) or 0)
+            data = getattr(response, "data", None)
+            headers = dict(getattr(response, "headers", None) or {})
+        result = ProxyResponse(status_code=status_code, data=data, headers=headers)
+        if status_code >= 400:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, {"category": "jira_api_error", "message": _jira_error_message(data), "upstream_status": status_code, "endpoint": _safe_endpoint(endpoint), "method": method.upper(), "correlation_id": correlation_id})
+        return result
 
-    def _connected_accounts_api(self) -> Any | None:
-        return getattr(self.client, "connected_accounts", None) or getattr(
-            self.client,
-            "connectedAccounts",
-            None,
-        )
-
-    @staticmethod
-    def _is_legacy_oauth_error(exc: Exception) -> bool:
-        message = str(exc).lower()
-        return "connected_accounts/link" in message or "no longer supported" in message
-
-    @staticmethod
-    def _app_name(app: Any) -> str:
-        if isinstance(app, str):
-            return app.upper()
-        value = getattr(app, "value", None)
-        if isinstance(value, str):
-            return value.upper()
-        name = getattr(app, "name", None)
-        if isinstance(name, str):
-            return name.upper()
-        return str(app).rsplit(".", 1)[-1].upper()
-
-    @staticmethod
-    def _api_key() -> str:
-        api_key = os.getenv("COMPOSIO_API_KEY", "")
-        if not api_key:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="COMPOSIO_API_KEY is not configured on the backend.",
-            )
-        return api_key
-
-    @staticmethod
-    def _get_auth_config_id(app_name: str) -> str:
-        key = f"COMPOSIO_{app_name.upper()}_AUTH_CONFIG_ID"
-        auth_config_id = os.getenv(key, "")
-        if not auth_config_id:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=(
-                    f"{key} is not configured. Composio Connect Links require "
-                    "an auth config id per provider."
-                ),
-            )
-        return auth_config_id
-
-    @staticmethod
-    def _raise_sdk_unavailable() -> None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Composio SDK is not installed. Install backend requirements "
-                "with: pip install -r backend/requirements.txt"
-            ),
-        )
+    def revoke_connection(self, *, connection_id: str) -> None:
+        if not connection_id:
+            return
+        try:
+            self.get_client().connected_accounts.delete(connection_id, revoke_on_delete=True)
+        except Exception as exc:
+            raise _composio_error("connection_revoke", exc) from exc
 
 
-composio_client = ComposioClientProxy()
+def _sdk_version() -> str:
+    try:
+        return version("composio")
+    except PackageNotFoundError:
+        return "not installed"
+
+
+def _auth_config_id(app_name: str) -> str:
+    value = os.getenv(f"COMPOSIO_{app_name.upper()}_AUTH_CONFIG_ID", "").strip()
+    if not value:
+        raise HTTPException(503, f"COMPOSIO_{app_name.upper()}_AUTH_CONFIG_ID is missing from the backend configuration.")
+    return value
+
+
+def _safe_endpoint(endpoint: str) -> str:
+    return endpoint.split("?", 1)[0]
+
+
+def _safe_text_value(value: Any) -> str:
+    redacted = _SENSITIVE_TEXT.sub("[REDACTED]", str(value or ""))
+    return _SAFE_TEXT.sub("", redacted)[:300]
+
+
+def _jira_error_message(data: Any) -> str:
+    if isinstance(data, dict):
+        messages = data.get("errorMessages") or []
+        errors = data.get("errors") or {}
+        parts = [str(item) for item in messages if item]
+        if isinstance(errors, dict):
+            parts.extend(f"{key}: {value}" for key, value in errors.items() if value)
+        if data.get("message"):
+            parts.append(str(data["message"]))
+        if parts:
+            return _safe_text_value("; ".join(parts))
+    return "Jira or Composio rejected the request."
+
+
+def _composio_error(category: str, exc: Exception, *, correlation_id: str | None = None, endpoint: str | None = None, method: str | None = None) -> HTTPException:
+    detail: dict[str, Any] = {"category": category, "message": _safe_text_value(exc)}
+    if correlation_id:
+        detail["correlation_id"] = correlation_id
+    if endpoint:
+        detail["endpoint"] = _safe_endpoint(endpoint)
+    if method:
+        detail["method"] = method.upper()
+    return HTTPException(502, detail)
+
+
+composio_client = ComposioClient()

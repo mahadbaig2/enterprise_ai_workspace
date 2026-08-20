@@ -34,6 +34,8 @@ class JiraTaskResponse(BaseModel):
 
 class JiraTaskListResponse(BaseModel):
     tasks: list[JiraTask]
+    source: str = "live"
+    stale: bool = False
 
 class JiraProjectListResponse(BaseModel):
     projects: list[JiraProject]

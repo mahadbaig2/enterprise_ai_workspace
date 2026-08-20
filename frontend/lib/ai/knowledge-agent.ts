@@ -102,7 +102,7 @@ export async function processKnowledgeQuery(
   let llmResponse = '';
   let llmError: string | undefined;
   try {
-    llmResponse = await generateGroqCompletion(systemPrompt, conversationContext ? `Recent conversation:\n${conversationContext}\n\nCurrent question:\n${userQuery}` : userQuery);
+    llmResponse = (await generateGroqCompletion(systemPrompt, conversationContext ? `Recent conversation:\n${conversationContext}\n\nCurrent question:\n${userQuery}` : userQuery)) || '';
   } catch (err) {
     llmError = err instanceof Error ? err.message : 'The language model failed.';
   }

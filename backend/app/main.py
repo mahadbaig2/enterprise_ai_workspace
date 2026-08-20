@@ -7,7 +7,8 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, integrations, memory, onboarding, rag, sync, tasks, workspace
+from app.lib.composio import composio_client
+from app.routers import agents, auth, integrations, memory, onboarding, rag, sync, tasks, workspace
 
 app = FastAPI(
     title="Enterprise AI Workspace API",
@@ -35,8 +36,26 @@ app.include_router(sync.router, prefix="/sync", tags=["Synchronization"])
 app.include_router(rag.router, prefix="/rag", tags=["RAG"])
 app.include_router(tasks.router, prefix="/tasks", tags=["Tasks"])
 app.include_router(memory.router, prefix="/memory", tags=["Workspace memory"])
+app.include_router(agents.router, prefix="/agents", tags=["Agents"])
+
+
+@app.on_event("startup")
+def validate_startup_configuration() -> None:
+    required = {
+        "SUPABASE_URL": os.getenv("SUPABASE_URL", "").strip(),
+        "SUPABASE_SECRET_KEY": os.getenv("SUPABASE_SECRET_KEY", "").strip(),
+        "SUPABASE_JWT_SECRET": os.getenv("SUPABASE_JWT_SECRET", "").strip(),
+        "COMPOSIO_API_KEY": os.getenv("COMPOSIO_API_KEY", "").strip(),
+        "COMPOSIO_JIRA_AUTH_CONFIG_ID": os.getenv("COMPOSIO_JIRA_AUTH_CONFIG_ID", "").strip(),
+        "FRONTEND_URL": os.getenv("FRONTEND_URL", "").strip(),
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        raise RuntimeError(f"Missing required backend configuration: {', '.join(missing)}")
+    if not required["FRONTEND_URL"].startswith(("http://", "https://")):
+        raise RuntimeError("FRONTEND_URL must be an absolute http(s) URL.")
 
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "service": "Enterprise AI Workspace API"}
+    return {"status": "ok", "service": "Enterprise AI Workspace API", "composio": composio_client.diagnostics()}

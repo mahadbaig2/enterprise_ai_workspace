@@ -13,6 +13,7 @@ from app.utils.supabase_client import get_admin_client
 router = APIRouter()
 
 SYNC_PROVIDERS = ("google_drive", "notion", "jira")
+JIRA_SYNC_LIMIT = 200
 
 
 def _resolve_workspace_id(current_user: CurrentUser) -> str:
@@ -466,19 +467,27 @@ def _sync_jira(workspace_id: str, connected_account_id: str) -> SyncProviderResu
     if isinstance(profile, dict):
         jira_base_url = str(profile.get("self", "")).split("/rest/api/", 1)[0].rstrip("/")
 
-    issues_response = composio_client.proxy_request(
-        endpoint="/rest/api/3/search",
-        method="POST",
-        connected_account_id=connected_account_id,
-        body={
-            "jql": "assignee = currentUser() ORDER BY updated DESC",
-            "maxResults": 10,
-            "fields": ["summary", "status", "priority", "assignee", "updated", "description"],
-        },
-        parameters=_headers(("Accept", "application/json"), ("Content-Type", "application/json")),
-    )
-    issue_data = _proxy_data(issues_response)
-    issues = issue_data.get("issues", []) if isinstance(issue_data, dict) else []
+    issues: list[dict[str, Any]] = []
+    start_at = 0
+    while len(issues) < JIRA_SYNC_LIMIT:
+        issues_response = composio_client.proxy_request(
+            endpoint="/rest/api/3/search",
+            method="POST",
+            connected_account_id=connected_account_id,
+            body={
+                "jql": "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
+                "startAt": start_at,
+                "maxResults": min(50, JIRA_SYNC_LIMIT - len(issues)),
+                "fields": ["summary", "status", "priority", "assignee", "updated", "duedate", "project", "issuetype", "description"],
+            },
+            parameters=_headers(("Accept", "application/json"), ("Content-Type", "application/json")),
+        )
+        issue_data = _proxy_data(issues_response)
+        page = issue_data.get("issues", []) if isinstance(issue_data, dict) else []
+        issues.extend(item for item in page if isinstance(item, dict))
+        if not isinstance(issue_data, dict) or not page or len(issues) >= int(issue_data.get("total", len(issues))) or len(page) < 50:
+            break
+        start_at += len(page)
 
     rows = []
     documents = []
@@ -555,6 +564,12 @@ def _sync_provider(workspace_id: str, provider: str) -> SyncProviderResult:
         )
 
     connected_account_id = _get_connected_account_id(workspace_id, provider)
+    if provider == "jira":
+        composio_client.assert_connection_active(
+            entity_id=workspace_id,
+            app_name="JIRA",
+            connection_id=connected_account_id,
+        )
     run_id = _start_sync_run(workspace_id, provider)
 
     try:

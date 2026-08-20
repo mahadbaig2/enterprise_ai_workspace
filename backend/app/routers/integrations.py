@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -31,14 +32,7 @@ def _validate_provider(provider: str) -> str:
 
 
 def _get_composio_app(provider: str) -> Any:
-    app_name = PROVIDER_TO_COMPOSIO_APP[_validate_provider(provider)]
-    try:
-        return composio_client.get_app(app_name)
-    except AttributeError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Composio SDK does not expose App.{app_name}.",
-        )
+    return PROVIDER_TO_COMPOSIO_APP[_validate_provider(provider)]
 
 
 def _row_to_response(row: dict) -> IntegrationResponse:
@@ -53,6 +47,7 @@ def _row_to_response(row: dict) -> IntegrationResponse:
         last_sync_at=row.get("last_sync_at"),
         last_index_at=row.get("last_index_at"),
         last_sync_status=row.get("last_sync_status"),
+        last_sync_error=row.get("last_sync_error"),
         last_sync_counts=row.get("last_sync_counts") or {},
     )
 
@@ -144,6 +139,13 @@ def _proxy_data(response: Any) -> Any:
     return getattr(response, "data", response)
 
 
+def _normalize_connection_id(*values: Any) -> str | None:
+    for value in values:
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
 def _notion_title(page: dict) -> str:
     properties = page.get("properties", {})
     for prop in properties.values():
@@ -197,19 +199,37 @@ def _get_active_connection(
     connection_id: str | None,
 ) -> Any:
     app = _get_composio_app(provider)
-    try:
-        return composio_client.get_connection(
-            entity_id=str(workspace_id),
-            app=app,
-            connection_id=connection_id or "",
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
+    last_error: Exception | None = None
+    for attempt in range(5):
+        try:
+            connection = composio_client.get_connection(
+                entity_id=str(workspace_id),
+                app_name=app,
+                connection_id=connection_id or "",
+            )
+            if connection is not None and _is_connection_active(connection):
+                return connection
+        except HTTPException as exc:
+            if exc.status_code not in {404, 409, 502}:
+                raise
+            last_error = exc
+        except Exception as exc:
+            last_error = exc
+        if attempt < 4:
+            time.sleep(float(os.getenv("COMPOSIO_CONNECTION_POLL_INTERVAL_SECONDS", "12")))
+
+    if last_error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to verify {provider} connection: {exc}",
-        )
+            detail=f"Failed to verify {provider} connection: {last_error}",
+        ) from last_error
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+            f"{provider.title()} authorization completed, but Composio did not "
+            "report an active connection. Please retry the connection."
+        ),
+    )
 
 
 @router.get("", response_model=list[IntegrationResponse])
@@ -258,9 +278,9 @@ def connect_integration(
     app = _get_composio_app(provider)
 
     try:
-        connection_request = composio_client.initiate_connection(
+        connection_request = composio_client.create_connection_link(
             entity_id=str(workspace_id),
-            app=app,
+            app_name=app,
             redirect_url=redirect_url,
         )
     except HTTPException:
@@ -286,13 +306,14 @@ def integration_callback(
     provider: str,
     connection_id: str | None = Query(default=None),
     connected_account_id: str | None = Query(default=None, alias="connectedAccountId"),
+    connected_account_id_snake: str | None = Query(default=None, alias="connected_account_id"),
     id: str | None = Query(default=None),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> IntegrationResponse:
     workspace_id = _resolve_workspace_id(current_user)
     _get_integration_row(workspace_id, provider)
     db = get_admin_client()
-    resolved_connection_id = connection_id or connected_account_id or id
+    resolved_connection_id = _normalize_connection_id(connection_id, connected_account_id, connected_account_id_snake, id)
 
     try:
         connection = _get_active_connection(workspace_id, provider, resolved_connection_id)
@@ -307,9 +328,15 @@ def integration_callback(
         raise
 
     if connection and _is_connection_active(connection):
-        composio_connection_id = (
-            _connection_attr(connection, "id", "connection_id") or resolved_connection_id
+        composio_connection_id = _normalize_connection_id(
+            _connection_attr(connection, "id", "connection_id"),
+            resolved_connection_id,
         )
+        if not composio_connection_id:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Composio returned an active connection without an identifier.",
+            )
         account_email = _connection_attr(
             connection,
             "account_email",
@@ -455,8 +482,6 @@ def disconnect_integration(
     try:
         row = _get_integration_row(workspace_id, provider)
         composio_client.revoke_connection(
-            entity_id=str(workspace_id),
-            app=_get_composio_app(provider),
             connection_id=row.get("composio_connection_id"),
         )
     except Exception:

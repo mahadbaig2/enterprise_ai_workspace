@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -16,11 +16,13 @@ function CallbackContent() {
   const { session, loading: authLoading } = useAuth();
   const [state, setState] = useState<CallbackState>('verifying');
   const [message, setMessage] = useState('Verifying your connection...');
+  const verificationStarted = useRef(false);
 
   const provider = searchParams.get('provider') ?? '';
   const connectionId =
     searchParams.get('connection_id') ??
     searchParams.get('connectedAccountId') ??
+    searchParams.get('connected_account_id') ??
     searchParams.get('id');
   const providerName = useMemo(
     () => getIntegrationMeta(provider)?.name ?? 'Integration',
@@ -33,12 +35,14 @@ function CallbackContent() {
     if (!session?.access_token || !provider) {
       void Promise.resolve().then(() => {
         setState('error');
-        setMessage('Connection failed. Please try again.');
+        setMessage(!session?.access_token ? 'Your session expired. Please sign in and reconnect Jira.' : 'Missing integration provider in callback.');
       });
       return;
     }
 
     let cancelled = false;
+    if (verificationStarted.current) return;
+    verificationStarted.current = true;
 
     const verify = async () => {
       try {
@@ -56,10 +60,15 @@ function CallbackContent() {
         if (cancelled) return;
         setMessage(`${providerName} connected successfully!`);
         window.setTimeout(() => router.push('/integrations'), 2000);
-      } catch {
+      } catch (error) {
         if (cancelled) return;
+        console.warn('Integration callback verification failed', {
+          provider,
+          callbackIdPresent: Boolean(connectionId),
+          message: error instanceof Error ? error.message : 'Connection verification failed.',
+        });
         setState('error');
-        setMessage('Connection failed. Please try again.');
+        setMessage(error instanceof Error ? error.message : 'Connection verification failed.');
       }
     };
 

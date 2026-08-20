@@ -13,6 +13,7 @@ export interface Integration {
   last_sync_at?: string | null;
   last_index_at?: string | null;
   last_sync_status?: string | null;
+  last_sync_error?: string | null;
   last_sync_counts?: { retrieved?: number; stored?: number; chunks?: number };
 }
 
@@ -23,7 +24,9 @@ export interface ConnectResponse {
 
 async function readError(res: Response): Promise<string> {
   const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-  return err.detail || `HTTP ${res.status}`;
+  if (typeof err.detail === 'string') return err.detail;
+  if (err.detail?.message) return String(err.detail.message);
+  return `HTTP ${res.status}`;
 }
 
 export async function getIntegrations(token: string): Promise<Integration[]> {

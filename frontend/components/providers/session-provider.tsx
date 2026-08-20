@@ -31,11 +31,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const supabase = createClient();
 
     // Hydrate initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
+    const hydrateSession = async () => {
+      try {
+        const result = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error('Auth session lookup timed out')), 8000)),
+        ]);
+        const { session } = result.data;
+        setSession(session);
+        setUser(session?.user ?? null);
+      } catch {
+        setSession(null);
+        setUser(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void hydrateSession();
 
     // Listen for subsequent auth state changes
     const {

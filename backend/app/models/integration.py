@@ -15,6 +15,7 @@ class IntegrationResponse(BaseModel):
     last_sync_at: Optional[datetime] = None
     last_index_at: Optional[datetime] = None
     last_sync_status: Optional[str] = None
+    last_sync_error: Optional[str] = None
     last_sync_counts: dict = Field(default_factory=dict)
 
 
