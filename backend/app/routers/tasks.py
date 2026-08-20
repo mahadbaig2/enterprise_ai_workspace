@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
@@ -5,6 +6,7 @@ from app.lib.composio import composio_client
 from app.middleware.auth import get_current_user
 from app.models.auth import CurrentUser
 from app.models.tasks import JiraTask, JiraTaskCreateRequest, JiraTaskListResponse, JiraTaskResponse, JiraTaskUpdateRequest, JiraProject, JiraProjectListResponse
+from app.services.jira import DEFAULT_JIRA_PROJECT_ID, DEFAULT_JIRA_PROJECT_KEY
 from app.utils.supabase_client import get_admin_client
 
 router = APIRouter()
@@ -22,17 +24,28 @@ def _connection(workspace_id: str) -> str:
     return str(connection_id)
 
 def _data(response: Any) -> Any:
-    if isinstance(response, dict): return response.get("data", response)
-    return getattr(response, "data", response)
+    data = response.get("data", response) if isinstance(response, dict) else getattr(response, "data", response)
+    if isinstance(data, str):
+        try: return json.loads(data)
+        except json.JSONDecodeError: return data
+    return data
 
 def _headers(*items: tuple[str, str]) -> list[dict[str, str]]:
     return [{"name": n, "value": v, "type": "header"} for n, v in items]
 
 def _task(issue: dict[str, Any]) -> JiraTask:
+    issue = issue if isinstance(issue, dict) else {}
     f = issue.get("fields", {}) or {}
+    if isinstance(f, str):
+        try: f = json.loads(f)
+        except json.JSONDecodeError: f = {}
+    if not isinstance(f, dict): f = {}
+    status = f.get("status") if isinstance(f.get("status"), dict) else {}
+    priority = f.get("priority") if isinstance(f.get("priority"), dict) else {}
+    assignee = f.get("assignee") if isinstance(f.get("assignee"), dict) else {}
     return JiraTask(key=issue.get("key", ""), summary=f.get("summary") or issue.get("key", "Untitled issue"),
-        status=(f.get("status") or {}).get("name"), assignee=(f.get("assignee") or {}).get("displayName") or (f.get("assignee") or {}).get("emailAddress"),
-        priority=(f.get("priority") or {}).get("name"), url=issue.get("self"), metadata={"fields": f})
+        status=status.get("name") or (f.get("status") if isinstance(f.get("status"), str) else None), assignee=assignee.get("displayName") or assignee.get("emailAddress"),
+        priority=priority.get("name") or (f.get("priority") if isinstance(f.get("priority"), str) else None), url=issue.get("self"), metadata={"fields": f})
 
 def _save(workspace_id: str, task: JiraTask) -> None:
     get_admin_client().table("jira_issues").upsert({"workspace_id": workspace_id, "issue_key": task.key, "summary": task.summary, "status": task.status, "priority": task.priority, "assignee_email": task.assignee, "url": task.url, "metadata": task.metadata}, on_conflict="workspace_id,issue_key").execute()
@@ -64,7 +77,7 @@ def list_projects(user: CurrentUser = Depends(get_current_user)) -> JiraProjectL
 @router.get("/issues", response_model=JiraTaskListResponse)
 def search_issues(project_key: str | None = None, user: CurrentUser = Depends(get_current_user)) -> JiraTaskListResponse:
     connection_id = _connection(_workspace_id(user))
-    jql = f"project = {project_key.strip().upper()} ORDER BY updated DESC" if project_key else "ORDER BY updated DESC"
+    jql = f"project = {project_key.strip().upper()} ORDER BY updated DESC" if project_key else "project IS NOT EMPTY ORDER BY updated DESC"
     payload = _data(composio_client.proxy_request(
         endpoint="/rest/api/3/search",
         method="POST",
@@ -77,13 +90,14 @@ def search_issues(project_key: str | None = None, user: CurrentUser = Depends(ge
 
 @router.post("", response_model=JiraTaskResponse)
 def create_task(payload: JiraTaskCreateRequest, user: CurrentUser = Depends(get_current_user)) -> JiraTaskResponse:
-    workspace_id = _workspace_id(user); connection_id = _connection(workspace_id); project = (payload.project_key or "").strip().upper()
-    if not project: raise HTTPException(400, "A Jira project key is required to create an issue.")
-    fields: dict[str, Any] = {"project": {"key": project}, "summary": payload.summary, "issuetype": {"name": payload.issue_type}, "priority": {"name": payload.priority}}
+    workspace_id = _workspace_id(user); connection_id = _connection(workspace_id); project = (payload.project_key or DEFAULT_JIRA_PROJECT_KEY).strip().upper()
+    project_ref = {"key": project} if payload.project_key else {"id": DEFAULT_JIRA_PROJECT_ID}
+    fields: dict[str, Any] = {"project": project_ref, "summary": payload.summary, "issuetype": {"name": payload.issue_type}, "priority": {"name": payload.priority}}
     if payload.description: fields["description"] = {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": payload.description}]}]}
     created = _data(composio_client.proxy_request(endpoint="/rest/api/3/issue", method="POST", connected_account_id=connection_id, body={"fields": fields}, parameters=_headers(("Accept", "application/json"), ("Content-Type", "application/json")))) or {}
     if not created.get("key"): raise HTTPException(502, "Jira did not return a created issue key.")
-    task = JiraTask(key=created["key"], summary=payload.summary, status="To Do", priority=payload.priority, url=created.get("self"), metadata={"issue_type": payload.issue_type}); _save(workspace_id, task)
+    issue = _data(composio_client.proxy_request(endpoint=f"/rest/api/3/issue/{created['key']}?fields=summary,status,priority,assignee", method="GET", connected_account_id=connection_id, parameters=_headers(("Accept", "application/json")))) or {}
+    task = _task(issue) if issue.get("key") else JiraTask(key=created["key"], summary=payload.summary, status="To Do", priority=payload.priority, url=created.get("self"), metadata={"issue_type": payload.issue_type}); _save(workspace_id, task)
     return JiraTaskResponse(task=task)
 
 @router.patch("/{issue_key}", response_model=JiraTaskResponse)

@@ -21,7 +21,7 @@ export async function generateGroqCompletion(systemPrompt: string, userPrompt: s
         { role: 'user', content: userPrompt }
       ],
       temperature: 0.2,
-      max_completion_tokens: 1024,
+      max_completion_tokens: 2048,
     });
 
     const content = response.choices[0]?.message?.content?.trim();

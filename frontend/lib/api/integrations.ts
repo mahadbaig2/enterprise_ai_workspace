@@ -127,15 +127,23 @@ export async function syncIntegration(
   provider: string,
   token: string
 ): Promise<unknown> {
-  const res = await fetch('/api/sync', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ provider }),
-    cache: 'no-store',
-  });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 90_000);
+  let res: Response;
+  try {
+    res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ provider }),
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeout);
+  }
 
   if (!res.ok) throw new Error(await readError(res));
   return res.json();

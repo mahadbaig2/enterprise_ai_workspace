@@ -1,5 +1,11 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+The chat workflow is orchestrated by the FastAPI backend using LangGraph. Configure
+`GROQ_API_KEY` and `GROQ_MODEL` in `backend/.env` in addition to the existing
+Supabase and Composio settings before starting the backend. The frontend proxies
+chat requests to `POST /agent/chat`; provider synchronization remains available
+through `/sync/{provider}`.
+
 ## Getting Started
 
 First, run the development server:

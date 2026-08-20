@@ -1,3 +1,5 @@
+import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -8,9 +10,11 @@ from app.middleware.auth import get_current_user
 from app.models.auth import CurrentUser
 from app.models.sync import SyncProviderResult, SyncResponse
 from app.services.rag import index_workspace_documents
+from app.services.jira import list_projects, search_issues
 from app.utils.supabase_client import get_admin_client
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 SYNC_PROVIDERS = ("google_drive", "notion", "jira")
 
@@ -36,8 +40,15 @@ def _resolve_workspace_id(current_user: CurrentUser) -> str:
 
 def _proxy_data(response: Any) -> Any:
     if isinstance(response, dict):
-        return response.get("data", response)
-    return getattr(response, "data", response)
+        data = response.get("data", response)
+    else:
+        data = getattr(response, "data", response)
+    if isinstance(data, str):
+        try:
+            return json.loads(data)
+        except json.JSONDecodeError:
+            logger.warning("Composio returned non-JSON text payload: %s", data[:200])
+    return data
 
 
 def _headers(*headers: tuple[str, str]) -> list[dict[str, str]]:
@@ -422,6 +433,7 @@ def _sync_google_drive(workspace_id: str, connected_account_id: str) -> SyncProv
     )
     list_data = _proxy_data(list_response)
     files = list_data.get("files", []) if isinstance(list_data, dict) else []
+    logger.info("Google Drive sync payload returned %d files", len(files))
 
     documents = []
     for file in files:
@@ -466,19 +478,14 @@ def _sync_jira(workspace_id: str, connected_account_id: str) -> SyncProviderResu
     if isinstance(profile, dict):
         jira_base_url = str(profile.get("self", "")).split("/rest/api/", 1)[0].rstrip("/")
 
-    issues_response = composio_client.proxy_request(
-        endpoint="/rest/api/3/search",
-        method="POST",
-        connected_account_id=connected_account_id,
-        body={
-            "jql": "assignee = currentUser() ORDER BY updated DESC",
-            "maxResults": 10,
-            "fields": ["summary", "status", "priority", "assignee", "updated", "description"],
-        },
-        parameters=_headers(("Accept", "application/json"), ("Content-Type", "application/json")),
-    )
-    issue_data = _proxy_data(issues_response)
-    issues = issue_data.get("issues", []) if isinstance(issue_data, dict) else []
+    issues = search_issues(workspace_id, jql="project IS NOT EMPTY ORDER BY updated DESC", max_results=100)
+    if not issues:
+        # Some Jira tenants return no rows for the broad query even when the
+        # account can browse individual projects. Retry each accessible project
+        # so a valid project such as AQL is not silently treated as empty.
+        for project in list_projects(workspace_id):
+            issues.extend(search_issues(workspace_id, jql=f"project = {project.key} ORDER BY updated DESC", max_results=100))
+    logger.info("Jira sync retrieved %d issues", len(issues))
 
     rows = []
     documents = []
@@ -529,6 +536,17 @@ def _sync_jira(workspace_id: str, connected_account_id: str) -> SyncProviderResu
         ).execute()
         stored = len(result.data or rows)
     _upsert_documents(documents)
+    db = get_admin_client()
+    issue_keys = [row["issue_key"] for row in rows]
+    stale_issues = db.table("jira_issues").delete().eq("workspace_id", workspace_id)
+    if issue_keys:
+        stale_issues = stale_issues.not_.in_("issue_key", issue_keys)
+    stale_issues.execute()
+    stale_documents = db.table("documents").delete().eq("workspace_id", workspace_id).eq("source", "jira")
+    external_ids = [document["external_id"] for document in documents]
+    if external_ids:
+        stale_documents = stale_documents.not_.in_("external_id", external_ids)
+    stale_documents.execute()
 
     return SyncProviderResult(
         provider="jira",
@@ -536,7 +554,7 @@ def _sync_jira(workspace_id: str, connected_account_id: str) -> SyncProviderResu
         retrieved_count=len(issues),
         stored_count=stored,
         indexed_count=len(documents),
-        message=f"Synchronized {stored} Jira issues.",
+        message=(f"Synchronized {stored} Jira issues." if issues else "Jira is connected, but no accessible issues were returned."),
     )
 
 

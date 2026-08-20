@@ -52,6 +52,12 @@ function buildExtractiveFallback(documents: KnowledgeDocument[]): string {
     : 'I could not find this information in the connected workspace documents.';
 }
 
+function sanitizeModelAnswer(answer: string): string {
+  return answer
+    .replace(/<(?:think|thinking|analysis)\b[\s\S]*?(?:<\/(?:think|thinking|analysis)>|$)/gi, '')
+    .trim();
+}
+
 function normalizeSource(source: string): Citation['source'] {
   if (source === 'google_drive' || source === 'notion' || source === 'jira') return source;
   return 'other';
@@ -132,6 +138,7 @@ export async function processKnowledgeQuery(
   const systemPrompt = 'You are the Knowledge Agent of Enterprise AI Workspace.\n' +
     'Answer the employee question directly and strictly from the provided document context.\n' +
     'Synthesize the answer from the source text. Never respond with only document links, document titles, or instructions to read the sources.\n' +
+    'Never output private reasoning, chain-of-thought, analysis, or <think> tags. Return only the final answer.\n' +
     'Cite factual claims inline using [Source X]. Use only the source numbers shown in the context.\n' +
     'If context does not contain the answer, state that information was not found in connected workspace documents.\n' +
     'Keep the response professional, concise, and structured in markdown.\n\n' +
@@ -144,7 +151,8 @@ export async function processKnowledgeQuery(
   } catch (err) {
     llmError = err instanceof Error ? err.message : 'The language model failed.';
   }
-  const answer = llmResponse || (llmError
+  const cleanedResponse = llmResponse ? sanitizeModelAnswer(llmResponse) : '';
+  const answer = cleanedResponse || (llmError
     ? buildExtractiveFallback(documents)
     : 'I could not find this information in the connected workspace documents.');
 
